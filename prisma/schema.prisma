@@ -11,3 +11,47 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum PrescriptionStatus {
+  CREATED
+  UPLOADING
+  DIGITISING
+  EXTRACTING
+  TRANSLATING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+}
+
+model Prescription {
+  id                    String             @id @default(uuid())
+  originalFileName      String
+  originalMimeType      String
+  originalFileReference String
+  status                PrescriptionStatus @default(CREATED)
+  sarvamJobId           String?
+  sarvamExtractJobId    String?
+  rawDigitisedText      String?            @db.Text
+  rawDigitisedJson      Json?
+  structuredData        Json?
+  originalLanguage      String?
+  targetLanguage        String?
+  errorCode             String?
+  errorMessage          String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  translations          PrescriptionTranslation[]
+}
+
+model PrescriptionTranslation {
+  id             String       @id @default(uuid())
+  prescriptionId String
+  targetLanguage String
+  translatedData Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([prescriptionId, targetLanguage])
+  @@index([prescriptionId])
+}
