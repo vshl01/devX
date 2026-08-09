@@ -1,4 +1,5 @@
 import { beginExtraction } from "@/lib/extraction";
+import { ensureSession, recordDocument } from "@/lib/sessions";
 import { ACCEPTED_DOCUMENT_TYPES, MAX_DOCUMENT_BYTES, validateDocument } from "@/lib/documents";
 import { fail, json } from "@/lib/http";
 import { SarvamError, type SarvamLanguageCode } from "@/types/sarvam";
@@ -34,13 +35,28 @@ export async function POST(request: Request) {
   }
 
   const language = (form.get("language") as SarvamLanguageCode | null) ?? "en-IN";
+  const sessionId = (form.get("sessionId") as string | null)?.trim();
+  if (!sessionId) return fail("Missing session id.", 400);
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
 
   try {
     const { jobId } = await beginExtraction({
       name: file.name,
       type: file.type,
-      bytes: new Uint8Array(await file.arrayBuffer()),
+      bytes,
       language,
+    });
+
+    await ensureSession(sessionId, language);
+    await recordDocument({
+      sessionId,
+      fileName: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      kind: check.kind,
+      sarvamJobId: jobId,
+      bytes,
     });
 
     return json<ExtractionStartResponse>({

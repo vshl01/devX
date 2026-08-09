@@ -30,7 +30,10 @@ export interface UseReportLanguage {
  * language for the life of a report, so switching back is instant, and the pane
  * keeps showing the previous language while a new one loads.
  */
-export function useReportLanguage(report: string): UseReportLanguage {
+export function useReportLanguage(
+  report: string,
+  sessionId: string | null = null,
+): UseReportLanguage {
   const [language, setLanguage] = useState<TranslatableLanguage>(SOURCE);
   const [entry, setEntry] = useState<CacheEntry>(EMPTY);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +58,7 @@ export function useReportLanguage(report: string): UseReportLanguage {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
-          body: JSON.stringify({ markdown: report, target: language, source: SOURCE }),
+          body: JSON.stringify({ markdown: report, target: language, source: SOURCE, sessionId }),
         });
 
         const payload = (await response.json()) as { markdown?: string; error?: string };
@@ -77,7 +80,7 @@ export function useReportLanguage(report: string): UseReportLanguage {
     })();
 
     return () => controller.abort();
-  }, [cached, language, report]);
+  }, [cached, language, report, sessionId]);
 
   const choose = useCallback((next: TranslatableLanguage) => {
     abortRef.current?.abort();

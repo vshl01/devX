@@ -1,4 +1,5 @@
 import { pollExtraction } from "@/lib/extraction";
+import { saveExtraction } from "@/lib/sessions";
 import { fail, json } from "@/lib/http";
 import { SarvamError } from "@/types/sarvam";
 import type { ExtractionStatusResponse } from "@/types/workspace";
@@ -13,6 +14,11 @@ export async function GET(_request: Request, context: RouteContext<"/api/extract
 
   try {
     const progress = await pollExtraction(jobId);
+
+    if (progress.phase === "done" && progress.markdown) {
+      await saveExtraction(jobId, progress.markdown, progress.pageCount ?? 1).catch(() => null);
+    }
+
     return json<ExtractionStatusResponse>(progress);
   } catch (cause) {
     if (cause instanceof SarvamError) {

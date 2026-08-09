@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { validateDocument } from "@/lib/documents";
+import type { SessionSnapshot } from "@/types/conversation";
 import type {
   ExtractionStartResponse,
   ExtractionStatusResponse,
@@ -29,12 +30,44 @@ export interface UseDocumentWorkspace extends WorkspaceState {
   retry: () => void;
 }
 
+export interface UseDocumentWorkspaceOptions {
+  /** Null until the session has been opened; uploads wait for it. */
+  sessionId: string | null;
+  /** Restored state for a session that already held a document. */
+  snapshot: SessionSnapshot | null;
+}
+
+/** Rebuilds workspace state from a persisted session. */
+function fromSnapshot(snapshot: SessionSnapshot): WorkspaceState {
+  const { document, extraction } = snapshot;
+  if (!document || !extraction) return IDLE;
+
+  return {
+    phase: extraction.report ? "ready" : "error",
+    document: {
+      name: document.fileName,
+      sizeBytes: document.sizeBytes,
+      contentType: document.mimeType,
+      kind: document.kind,
+      previewUrl: `/api/documents/${document.id}/file`,
+    },
+    progress: 1,
+    extracted: extraction.markdown,
+    report: extraction.report ?? "",
+    pageCount: extraction.pageCount,
+    message: extraction.report ? null : "The reading of this document did not finish. Upload it again.",
+  };
+}
+
 /**
  * Drives one document from selection to finished report:
  * upload with progress, poll Sarvam Document AI, then stream the structured
  * report. Every stage is cancellable, and replacing the file cancels the last.
  */
-export function useDocumentWorkspace(): UseDocumentWorkspace {
+export function useDocumentWorkspace({
+  sessionId,
+  snapshot,
+}: UseDocumentWorkspaceOptions): UseDocumentWorkspace {
   const [state, setState] = useState<WorkspaceState>(IDLE);
 
   const requestRef = useRef<XMLHttpRequest | null>(null);
@@ -62,6 +95,19 @@ export function useDocumentWorkspace(): UseDocumentWorkspace {
   }, [cancel, releasePreview]);
 
   /** Streams the structured report once OCR text is in hand. */
+  // A restored session repopulates both panes exactly once.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (hydratedRef.current || !snapshot?.document) return;
+    hydratedRef.current = true;
+    setState(fromSnapshot(snapshot));
+  }, [snapshot]);
+
+  const sessionRef = useRef(sessionId);
+  useEffect(() => {
+    sessionRef.current = sessionId;
+  }, [sessionId]);
+
   const compose = useCallback(async (text: string) => {
     const controller = new AbortController();
     abortRef.current = controller;
@@ -71,7 +117,7 @@ export function useDocumentWorkspace(): UseDocumentWorkspace {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, sessionId: sessionRef.current }),
       });
 
       if (!response.ok || !response.body) {
@@ -183,6 +229,7 @@ export function useDocumentWorkspace(): UseDocumentWorkspace {
       const form = new FormData();
       form.append("document", file);
       form.append("language", "en-IN");
+      form.append("sessionId", sessionRef.current ?? "");
 
       const request = new XMLHttpRequest();
       requestRef.current = request;
@@ -234,6 +281,11 @@ export function useDocumentWorkspace(): UseDocumentWorkspace {
     (file: File) => {
       cancel();
       releasePreview();
+
+      if (!sessionRef.current) {
+        setState({ ...IDLE, phase: "error", message: "Still opening your session. Try again in a moment." });
+        return;
+      }
 
       const check = validateDocument(file);
       if (!check.ok) {

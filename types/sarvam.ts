@@ -173,3 +173,23 @@ export interface SarvamTranslateResponse {
   translated_text: string;
   source_language_code: string | null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Text to speech                                                             */
+/* -------------------------------------------------------------------------- */
+
+export type SarvamTtsModel = "bulbul:v2" | "bulbul:v3";
+
+export interface SarvamTtsRequest {
+  text: string;
+  /** Must be one of `SPEECH_LANGUAGES`; the rest have no voice. */
+  languageCode: string;
+  speaker?: string;
+  pace?: number;
+}
+
+export interface SarvamTtsResponse {
+  request_id: string | null;
+  /** Base64 audio, one entry per input. */
+  audios: string[];
+}

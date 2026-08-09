@@ -22,6 +22,7 @@ required for the realtime speech relay (see below). `npm run build` is unchanged
 | `SARVAM_API_KEY` | yes | `sk_...`. Server side only. `SARVAM_AI` is accepted as an alias. |
 | `SARVAM_BASE_URL` | no | Defaults to `https://api.sarvam.ai`. |
 | `SARVAM_WS_URL` | no | Defaults to `wss://api.sarvam.ai/speech-to-text/ws`. |
+| `DATABASE_URL` | yes | Postgres. The workspace stores sessions, documents and transcripts. |
 
 The key is never sent to the browser. Client code only ever talks to same-origin routes.
 
@@ -33,12 +34,16 @@ components/ui/       Button, Container, Logo, Reveal
 components/layout/   Navbar (auto-hiding glass bar), Footer
 components/sections/ Hero, SupportedReports, HowItWorks, ExampleReading, Limits, ClosingCta
 components/composer/ Composer, MicButton, Waveform, FileChip, ReplyPanel
-components/workspace/ Workspace, SourcePane, InsightsPane, ReportMarkdown, LanguageSelect
+components/workspace/ Workspace, LeftPane (Chat | Document), ChatPane, VoiceBar,
+                     VoiceWaveform, MessageBubble, InsightsPane, ReportMarkdown
 hooks/               use-audio-recorder, use-report-upload, use-coach-reply,
-                     use-document-workspace, use-report-language, use-split-pane
+                     use-document-workspace, use-report-language, use-split-pane,
+                     use-voice-conversation, use-workspace-session
 lib/                 sarvam.ts (all Sarvam calls), extraction.ts, markdown-translate.ts,
-                     languages.ts, insights.ts, stt-transport.ts, audio.ts, documents.ts
-types/               sarvam.ts (API shapes), composer.ts, workspace.ts (UI state)
+                     conversation.ts, sessions.ts, db.ts, mic-capture.ts, audio-queue.ts,
+                     turn-protocol.ts, languages.ts, insights.ts, stt-transport.ts
+types/               sarvam.ts (API shapes), composer.ts, workspace.ts, conversation.ts
+prisma/              schema.prisma and committed migrations
 public/audio/        recorder-worklet.js (audio-thread capture)
 server.mjs           Next + the /api/stt/ws relay
 ```
@@ -96,7 +101,46 @@ pane dims rather than blanking while one loads.
 The landing page composer shares the same reader: text-layer PDFs go through `unpdf`, and photos or
 scans fall through to Document AI.
 
+## The voice conversation
+
+The moment the report finishes, the agent opens the conversation itself: one short spoken insight
+naming a real value from the document, then one follow-up question that only makes sense for that
+document. No generic greeting; the opening prompt forbids it.
+
+Full duplex runs on the relay that already exists. The mic (`lib/mic-capture.ts`) stays open through
+the agent's own turn and streams 250 ms frames to `/api/stt/ws`. Sarvam's VAD drives both ends:
+`END_SPEECH` plus 900 ms of quiet submits the turn, and `START_SPEECH` during playback is a barge-in.
+Amplitude cuts the audio locally first, because the server signal round-trips and an interruption has
+to feel immediate. On the mic button a tap toggles listening and a press over 300 ms is push-to-talk,
+which suspends automatic endpointing. A floating mic sits over the Document view: one tap opens the
+microphone, starts listening and follows the transcript over to Chat.
+
+`POST /api/converse` streams the reply. `SpeechChunker` cuts the first speakable clause out of the
+token stream and `/api/tts` synthesises it while the model is still writing; later chunks synthesise
+in parallel and `AudioQueue` plays them strictly in order on the Web Audio clock, which is also what
+makes `stop()` instant. Measured against Sarvam: first token 2.1 s, first chunk synthesised in 0.83 s,
+so time to first audio is roughly 2.9 s. The sub-second target is not reachable while the model's own
+first token takes 2.1 s; the next lever is Sarvam's streaming TTS socket, not more client tuning.
+
+Every reply ends with a `%%META%%` line carrying `confidence` and `refs`. It is stripped before
+speech and drives the bubble style: `unclear_source` is tinted and tagged "Unclear scan",
+`outside_document` is dashed and tagged "Not from your report", and refs render as source chips.
+The agent never diagnoses or changes a dose; it hands treatment decisions to the physician in
+conversation, and the UI carries one quiet disclaimer rather than a wall of them.
+
+Languages follow the insights pane. Sarvam speaks eleven of the thirteen; Assamese and Urdu translate
+but have no voice, so those fall back to text with the voice bar disabled.
+
+## Schema
+
+`Session` holds one `Document` (original bytes kept for preview) with one `Extraction`
+(OCR markdown, page count, generated report), plus `Message` rows (role, text, audio_url, language,
+confidence, source_refs, created_at) with `MessageAudio` chunks for replay, and a `ReportTranslation`
+cache keyed by session and language. Uploading a new document clears the previous document, its
+transcript and its translations in one transaction. The session id lives in local storage, so a
+reload restores the document, the report and the whole conversation.
+
 ## Not built here
 
-Scope is the landing page. There is no auth, no persistence, no report history, and no chat thread
-beyond the single streamed answer under the composer.
+No auth and no multi-document history: a session holds the one document being discussed. The landing
+page composer still answers a single turn rather than opening a thread.

@@ -6,13 +6,16 @@ import { useState } from "react";
 
 import { useDocumentWorkspace } from "@/hooks/use-document-workspace";
 import { useSplitPane } from "@/hooks/use-split-pane";
+import { useVoiceConversation } from "@/hooks/use-voice-conversation";
+import { useWorkspaceSession } from "@/hooks/use-workspace-session";
 import { Logo } from "@/components/ui/logo";
+import type { TranslatableLanguage } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
 import { InsightsPane } from "./insights-pane";
-import { SourcePane } from "./source-pane";
+import { LeftPane } from "./left-pane";
 
-type MobileTab = "document" | "insights";
+type MobileTab = "source" | "insights";
 
 /**
  * Two-pane workspace. Panes scroll independently and reach the viewport edges;
@@ -20,9 +23,18 @@ type MobileTab = "document" | "insights";
  * screens, where a 50/50 split would leave neither side usable.
  */
 export function Workspace() {
-  const workspace = useDocumentWorkspace();
+  const { sessionId, snapshot } = useWorkspaceSession();
+  const workspace = useDocumentWorkspace({ sessionId, snapshot });
   const { percent, dragging, containerRef, handleProps } = useSplitPane();
-  const [tab, setTab] = useState<MobileTab>("document");
+  const [tab, setTab] = useState<MobileTab>("source");
+  const [language, setLanguage] = useState<TranslatableLanguage>("en-IN");
+
+  const conversation = useVoiceConversation({
+    sessionId,
+    language,
+    ready: workspace.phase === "ready",
+    initialMessages: snapshot?.messages ?? [],
+  });
 
   const hasReport = workspace.phase === "composing" || workspace.phase === "ready";
 
@@ -32,7 +44,7 @@ export function Workspace() {
   };
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas">
+    <div className="flex h-dvh flex-col overflow-hidden bg-canvas">
       <header className="glass-nav flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line px-4 sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <Link
@@ -46,19 +58,24 @@ export function Workspace() {
         </div>
 
         <nav aria-label="Pane" className="flex rounded-full border border-line bg-sunken p-0.5 md:hidden">
-          {(["document", "insights"] as const).map((id) => (
+          {(
+            [
+              { id: "source" as const, label: "Document" },
+              { id: "insights" as const, label: "Insights" },
+            ]
+          ).map((item) => (
             <button
-              key={id}
+              key={item.id}
               type="button"
-              onClick={() => setTab(id)}
-              aria-current={tab === id}
+              onClick={() => setTab(item.id)}
+              aria-current={tab === item.id}
               className={cn(
-                "rounded-full px-3.5 py-1.5 text-[13px] font-medium capitalize transition-colors duration-150",
-                tab === id ? "bg-surface text-ink shadow-sm" : "text-ink-soft",
+                "rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors duration-150",
+                tab === item.id ? "bg-surface text-ink shadow-sm" : "text-ink-soft",
               )}
             >
-              {id}
-              {id === "insights" && hasReport && tab !== "insights" ? (
+              {item.label}
+              {item.id === "insights" && hasReport && tab !== "insights" ? (
                 <span aria-hidden className="ml-1.5 inline-block size-1.5 rounded-full bg-accent" />
               ) : null}
             </button>
@@ -68,11 +85,14 @@ export function Workspace() {
 
       <div ref={containerRef} className="flex min-h-0 flex-1 md:flex-row">
         <div
-          className={cn("min-h-0 min-w-0 flex-1 md:flex-none", tab === "document" ? "flex" : "hidden md:flex")}
+          className={cn(
+            "min-h-0 min-w-0 flex-1 md:flex-none",
+            tab === "source" ? "flex" : "hidden md:flex",
+          )}
           style={{ flexBasis: `${percent}%` }}
         >
           <div className="min-h-0 w-full">
-            <SourcePane
+            <LeftPane
               document={workspace.document}
               phase={workspace.phase}
               progress={workspace.progress}
@@ -81,6 +101,28 @@ export function Workspace() {
               onSelect={select}
               onRemove={workspace.reset}
               onRetry={workspace.retry}
+              conversationReady={workspace.phase === "ready"}
+              onActivateVoice={() => void conversation.activate()}
+              conversation={{
+                messages: conversation.messages,
+                interim: conversation.interim,
+                status: conversation.status,
+                error: conversation.error,
+                onDismissError: conversation.dismissError,
+              }}
+              voice={{
+                status: conversation.status,
+                micOn: conversation.micOn,
+                blocked: conversation.blocked,
+                speechAvailable: conversation.speechAvailable,
+                levelRef: conversation.levelRef,
+                onToggleMic: conversation.toggleMic,
+                onInterrupt: conversation.interrupt,
+                onSend: conversation.sendText,
+                onHoldStart: conversation.holdStart,
+                onHoldEnd: conversation.holdEnd,
+                onUnblock: conversation.unblock,
+              }}
             />
           </div>
         </div>
@@ -99,7 +141,7 @@ export function Workspace() {
 
         <div
           className={cn(
-            "min-h-0 min-w-0 flex-1 border-t border-line md:border-t-0 md:border-l-0",
+            "min-h-0 min-w-0 flex-1 border-t border-line md:border-t-0",
             tab === "insights" ? "flex" : "hidden md:flex",
           )}
         >
@@ -110,6 +152,8 @@ export function Workspace() {
               documentName={workspace.document?.name ?? null}
               message={workspace.message}
               onRetry={workspace.retry}
+              sessionId={sessionId}
+              onLanguageChange={setLanguage}
             />
           </div>
         </div>

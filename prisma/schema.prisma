@@ -55,3 +55,103 @@ model PrescriptionTranslation {
   @@unique([prescriptionId, targetLanguage])
   @@index([prescriptionId])
 }
+
+/// ---------------------------------------------------------------------------
+/// Document workspace and voice conversation (/new-screen)
+/// ---------------------------------------------------------------------------
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+/// How much the assistant is standing behind a claim. Drives the bubble style.
+enum MessageConfidence {
+  /// Read directly from the extracted document.
+  GROUNDED
+  /// The document says something here, but the scan or handwriting is unclear.
+  UNCLEAR_SOURCE
+  /// General knowledge, not present in this document.
+  OUTSIDE_DOCUMENT
+}
+
+model Session {
+  id           String              @id @default(uuid())
+  language     String              @default("en-IN")
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  documents    Document[]
+  messages     Message[]
+  translations ReportTranslation[]
+}
+
+model Document {
+  id          String      @id @default(uuid())
+  sessionId   String
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  kind        String
+  sarvamJobId String?
+  /// The original file, so reopening a session restores the preview.
+  bytes       Bytes?
+  createdAt   DateTime    @default(now())
+  session     Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  extraction  Extraction?
+
+  @@index([sessionId])
+}
+
+model Extraction {
+  id         String   @id @default(uuid())
+  documentId String   @unique
+  markdown   String   @db.Text
+  pageCount  Int      @default(1)
+  /// The structured insights report, in the source language.
+  report     String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id         String            @id @default(uuid())
+  sessionId  String
+  role       MessageRole
+  text       String            @db.Text
+  /// Route that replays this turn, or null when nothing was spoken.
+  audioUrl   String?
+  language   String
+  confidence MessageConfidence @default(GROUNDED)
+  /// Which extracted values or pages the claim came from.
+  sourceRefs Json?
+  createdAt  DateTime          @default(now())
+  session    Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  audio      MessageAudio[]
+
+  @@index([sessionId, createdAt])
+}
+
+/// Spoken audio, kept per synthesis chunk so replay matches what was heard.
+model MessageAudio {
+  id        String   @id @default(uuid())
+  messageId String
+  index     Int
+  mimeType  String   @default("audio/mpeg")
+  bytes     Bytes
+  createdAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, index])
+}
+
+model ReportTranslation {
+  id        String   @id @default(uuid())
+  sessionId String
+  language  String
+  markdown  String   @db.Text
+  createdAt DateTime @default(now())
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, language])
+}

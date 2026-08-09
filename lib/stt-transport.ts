@@ -22,6 +22,8 @@ export interface SttTransport {
 export interface SttTransportHandlers {
   onTranscript: (text: string) => void;
   onSpeechStart?: () => void;
+  /** Sarvam's own endpointing. The conversation replies on this signal. */
+  onSpeechEnd?: () => void;
   onError: (message: string) => void;
   /** Fires once the transport is confirmed usable. */
   onReady?: () => void;
@@ -100,6 +102,7 @@ export function createSocketTransport(
 
       if (message.type === "events") {
         if (message.data?.signal_type === "START_SPEECH") handlers.onSpeechStart?.();
+        if (message.data?.signal_type === "END_SPEECH") handlers.onSpeechEnd?.();
         return;
       }
 

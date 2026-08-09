@@ -1,10 +1,10 @@
 "use client";
 
 import { ArrowClockwise, Check, Copy, DownloadSimple, FileText, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useReportLanguage } from "@/hooks/use-report-language";
-import { languageLabel } from "@/lib/languages";
+import { languageLabel, type TranslatableLanguage } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 import type { WorkspacePhase } from "@/types/workspace";
 
@@ -19,15 +19,29 @@ export function InsightsPane({
   documentName,
   message,
   onRetry,
+  sessionId,
+  onLanguageChange,
 }: {
   phase: WorkspacePhase;
   report: string;
   documentName: string | null;
   message: string | null;
   onRetry: () => void;
+  sessionId: string | null;
+  /** The conversation speaks whatever language the pane is showing. */
+  onLanguageChange: (next: TranslatableLanguage) => void;
 }) {
   const { language, markdown, translating, error, setLanguage } = useReportLanguage(
     phase === "ready" ? report : "",
+    sessionId,
+  );
+
+  const chooseLanguage = useCallback(
+    (next: TranslatableLanguage) => {
+      setLanguage(next);
+      onLanguageChange(next);
+    },
+    [onLanguageChange, setLanguage],
   );
 
   // While the report is still streaming it is shown as written, untranslated.
@@ -43,7 +57,7 @@ export function InsightsPane({
           <>
             <LanguageSelect
               value={language}
-              onChange={setLanguage}
+              onChange={chooseLanguage}
               disabled={phase !== "ready" || translating}
             />
             <ReportActions markdown={body} documentName={documentName} disabled={!hasBody} />

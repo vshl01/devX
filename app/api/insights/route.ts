@@ -1,6 +1,7 @@
 import { fail } from "@/lib/http";
 import { buildReportMessages, MAX_DOCUMENT_CHARS } from "@/lib/insights";
 import { streamChat } from "@/lib/sarvam";
+import { saveReport } from "@/lib/sessions";
 import { SarvamError } from "@/types/sarvam";
 
 export const runtime = "nodejs";
@@ -8,9 +9,9 @@ export const dynamic = "force-dynamic";
 
 /** Streams the structured Markdown report for one extracted document. */
 export async function POST(request: Request) {
-  let body: { text?: string };
+  let body: { text?: string; sessionId?: string };
   try {
-    body = (await request.json()) as { text?: string };
+    body = (await request.json()) as { text?: string; sessionId?: string };
   } catch {
     return fail("Expected a JSON body.", 400);
   }
@@ -21,11 +22,29 @@ export async function POST(request: Request) {
   }
 
   try {
-    const stream = await streamChat({
+    const upstream = await streamChat({
       messages: buildReportMessages(text),
       temperature: 0.2,
       max_tokens: 1800,
     });
+
+    const sessionId = body.sessionId?.trim();
+    let report = "";
+
+    // The report is stored as it finishes, so a reload restores the pane.
+    const stream = upstream.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          report += new TextDecoder().decode(chunk, { stream: true });
+          controller.enqueue(chunk);
+        },
+        async flush() {
+          if (sessionId && report.trim()) {
+            await saveReport(sessionId, report).catch(() => null);
+          }
+        },
+      }),
+    );
 
     return new Response(stream, {
       headers: {

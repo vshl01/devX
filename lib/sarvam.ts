@@ -12,6 +12,9 @@ import type {
   SarvamSttResponse,
   SarvamTranslateRequest,
   SarvamTranslateResponse,
+  SarvamTtsModel,
+  SarvamTtsRequest,
+  SarvamTtsResponse,
 } from "@/types/sarvam";
 import { SarvamError } from "@/types/sarvam";
 
@@ -382,4 +385,77 @@ export async function translate(
     translated_text: data.translated_text ?? "",
     source_language_code: data.source_language_code ?? null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Text to speech                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `bulbul:v2` is deliberate: it returns a short sentence in roughly half the
+ * time of v3, and the conversation is chunked so time to first audio is what
+ * the listener actually feels.
+ */
+const TTS_MODEL: SarvamTtsModel = "bulbul:v2";
+const TTS_TIMEOUT_MS = 20_000;
+
+/** Languages Sarvam can speak. Everything else stays text only. */
+export const SPEECH_LANGUAGES = [
+  "en-IN",
+  "hi-IN",
+  "bn-IN",
+  "gu-IN",
+  "kn-IN",
+  "ml-IN",
+  "mr-IN",
+  "od-IN",
+  "pa-IN",
+  "ta-IN",
+  "te-IN",
+] as const;
+
+export function canSpeak(language: string): boolean {
+  return (SPEECH_LANGUAGES as readonly string[]).includes(language);
+}
+
+/** Hard cap for `bulbul:v2`. The chunker keeps requests well under it. */
+export const TTS_MAX_CHARS = 1500;
+
+export async function synthesize({
+  text,
+  languageCode,
+  speaker = "anushka",
+  pace = 1,
+}: SarvamTtsRequest): Promise<{ audio: Buffer; mimeType: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/text-to-speech`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: text.slice(0, TTS_MAX_CHARS),
+        target_language_code: languageCode,
+        language_code: languageCode,
+        model: TTS_MODEL,
+        speaker,
+        pace,
+        output_audio_codec: "mp3",
+        speech_sample_rate: 22050,
+        enable_preprocessing: true,
+      }),
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    asNetworkError(cause);
+  }
+
+  if (!response.ok) await failFromResponse(response);
+
+  const data = (await response.json()) as Partial<SarvamTtsResponse>;
+  const encoded = data.audios?.[0];
+  if (!encoded) {
+    throw new SarvamError("upstream_error", "Sarvam returned no audio.");
+  }
+
+  return { audio: Buffer.from(encoded, "base64"), mimeType: "audio/mpeg" };
 }
