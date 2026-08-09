@@ -1,6 +1,7 @@
+import json
 from datetime import date as date_cls, time as time_cls
 
-from livekit.agents import function_tool
+from livekit.agents import RunContext, function_tool
 
 import calendar_sync
 import db
@@ -40,7 +41,9 @@ async def get_availability(date: str, time_of_day: str | None = None) -> dict:
 
 
 @function_tool
-async def book_appointment(patient_name: str, patient_phone: str, date: str, time: str) -> dict:
+async def book_appointment(
+    context: RunContext, patient_name: str, patient_phone: str, date: str, time: str
+) -> dict:
     """Book a confirmed appointment slot. Only call this after the patient has
     explicitly confirmed a specific date and time that get_availability showed
     as free — never book a slot you haven't just checked is available.
@@ -67,5 +70,20 @@ async def book_appointment(patient_name: str, patient_phone: str, date: str, tim
         event_id = await calendar_sync.create_event(doctor, d, t, patient_name, patient_phone)
         if event_id:
             await db.set_appointment_calendar_event(result["appointment_id"], event_id)
+
+        # Lets the browser UI show a confirmation card without polling the DB.
+        room = context.session.room_io.room
+        room.local_participant.publish_data(
+            json.dumps(
+                {
+                    "type": "appointment_booked",
+                    "doctorName": doctor["name"],
+                    "patientName": patient_name,
+                    "date": date,
+                    "time": time,
+                }
+            ),
+            topic="appointment",
+        )
 
     return result

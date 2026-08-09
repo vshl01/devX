@@ -9,14 +9,26 @@ import { cn } from "@/lib/utils";
 
 type CallState = "idle" | "connecting" | "live" | "error";
 
+type BookedAppointment = {
+  doctorName: string;
+  patientName: string;
+  date: string;
+  time: string;
+};
+
 /**
  * "Call Receptionist" button + floating in-call panel. Joins the LiveKit
  * room the call-agent worker is dispatched into (see app/api/call/token)
  * and plays the agent's voice back through a hidden <audio> element.
  */
-export function CallWidget() {
+export function CallWidget({
+  onAppointmentBooked,
+}: {
+  onAppointmentBooked?: (appointment: BookedAppointment) => void;
+}) {
   const [state, setState] = useState<CallState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const roomRef = useRef<import("livekit-client").Room | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const levelRef = useRef(0);
@@ -24,7 +36,10 @@ export function CallWidget() {
   const cleanup = useCallback(() => {
     roomRef.current?.disconnect();
     roomRef.current = null;
+    audioElRef.current?.remove();
+    audioElRef.current = null;
     levelRef.current = 0;
+    setAudioBlocked(false);
   }, []);
 
   useEffect(() => cleanup, [cleanup]);
@@ -50,14 +65,45 @@ export function CallWidget() {
       const room = new Room();
       roomRef.current = room;
 
-      room.on(RoomEvent.TrackSubscribed, (track) => {
+      room.on(RoomEvent.ParticipantConnected, (p) => {
+        console.log("[call] participant connected:", p.identity);
+      });
+
+      room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+        console.log("[call] track subscribed:", track.kind, "from", participant.identity);
         if (track.kind === Track.Kind.Audio) {
-          audioElRef.current = track.attach() as HTMLAudioElement;
-          audioElRef.current.autoplay = true;
+          const el = track.attach() as HTMLAudioElement;
+          el.autoplay = true;
+          document.body.appendChild(el);
+          audioElRef.current = el;
+          el.play()
+            .then(() => console.log("[call] audio element playing"))
+            .catch((e) => console.error("[call] audio play() blocked:", e));
+        }
+      });
+
+      // Autoplay-with-sound can be blocked by the browser since the remote
+      // track arrives well after the click that started the call; LiveKit's
+      // own flag + startAudio() is the documented way to recover from that.
+      room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        setAudioBlocked(!room.canPlaybackAudio);
+      });
+
+      room.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+        if (topic !== "appointment") return;
+        try {
+          const data = JSON.parse(new TextDecoder().decode(payload));
+          if (data.type === "appointment_booked") {
+            onAppointmentBooked?.(data);
+          }
+        } catch (e) {
+          console.error("[call] failed to parse appointment data:", e);
         }
       });
 
       room.on(RoomEvent.Disconnected, () => {
+        audioElRef.current?.remove();
+        audioElRef.current = null;
         roomRef.current = null;
         setState("idle");
       });
@@ -120,6 +166,14 @@ export function CallWidget() {
         >
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
+          ) : audioBlocked ? (
+            <button
+              type="button"
+              className="text-sm font-medium text-ink underline"
+              onClick={() => roomRef.current?.startAudio()}
+            >
+              Tap to enable audio
+            </button>
           ) : (
             <>
               <div className="flex items-center gap-2">
