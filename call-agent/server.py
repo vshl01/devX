@@ -17,12 +17,13 @@ load_dotenv()
 
 app = FastAPI()
 
+# Vercel assigns a new *.vercel.app URL per deployment (seen: dev-x-zeta,
+# dev-x-7a21-three) — matching by pattern instead of an exact domain avoids
+# editing this every time a redeploy changes it.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://dev-x-zeta.vercel.app",
-        "http://localhost:3000",
-    ],
+    allow_origins=["http://localhost:3000"],
+    allow_origin_regex=r"https://dev-x-[a-z0-9-]*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
