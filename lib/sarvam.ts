@@ -1,12 +1,17 @@
 import "server-only";
 
 import type {
+  DocAiFileLinks,
+  DocAiJob,
+  DocAiJobParameters,
   SarvamChatMessage,
   SarvamChatRequest,
   SarvamChatResponse,
   SarvamChatStreamChunk,
   SarvamSttRequest,
   SarvamSttResponse,
+  SarvamTranslateRequest,
+  SarvamTranslateResponse,
 } from "@/types/sarvam";
 import { SarvamError } from "@/types/sarvam";
 
@@ -211,10 +216,8 @@ export interface CoachTurnInput {
   question: string;
   report?: {
     name: string;
-    /** Text extracted from a PDF. Empty when the report is an image. */
+    /** Report text. For photos and scans this comes from Document AI. */
     excerpt: string;
-    /** Data URL for an image report, read by the vision model. */
-    imageDataUrl?: string;
   };
 }
 
@@ -234,19 +237,6 @@ export function buildCoachMessages({
     ];
   }
 
-  if (report.imageDataUrl) {
-    return [
-      { role: "system", content: HEALTH_COACH_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: `Report attached: ${report.name}\n\n${asked}` },
-          { type: "image_url", image_url: { url: report.imageDataUrl } },
-        ],
-      },
-    ];
-  }
-
   const context = report.excerpt.trim()
     ? `Report "${report.name}" contents:\n"""\n${report.excerpt.trim()}\n"""`
     : `A report named "${report.name}" was attached but no text could be read from it. Say so, and ask for a clearer copy.`;
@@ -257,11 +247,139 @@ export function buildCoachMessages({
   ];
 }
 
-/** Same turn without the image part, used when the model rejects vision input. */
-export function buildTextOnlyFallback(input: CoachTurnInput): SarvamChatMessage[] {
-  if (!input.report) return buildCoachMessages(input);
-  return buildCoachMessages({
-    ...input,
-    report: { ...input.report, imageDataUrl: undefined },
+
+/* -------------------------------------------------------------------------- */
+/* Document AI                                                                */
+/* -------------------------------------------------------------------------- */
+
+const DOC_AI_ROOT = "/doc-digitization/job/v1";
+const DOC_AI_TIMEOUT_MS = 30_000;
+
+async function docAi<T>(
+  path: string,
+  init: { method: "GET" | "POST"; body?: unknown } = { method: "GET" },
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${DOC_AI_ROOT}${path}`, {
+      method: init.method,
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: init.method === "POST" ? JSON.stringify(init.body ?? {}) : undefined,
+      signal: AbortSignal.timeout(DOC_AI_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    asNetworkError(cause);
+  }
+
+  if (!response.ok) await failFromResponse(response);
+  return (await response.json()) as T;
+}
+
+/** Creates a digitisation job. Nothing is processed until `startDocAiJob`. */
+export function createDocAiJob(
+  parameters: Partial<DocAiJobParameters> = {},
+): Promise<DocAiJob> {
+  return docAi<DocAiJob>("", {
+    method: "POST",
+    body: {
+      job_parameters: {
+        language: parameters.language ?? "en-IN",
+        output_format: parameters.output_format ?? "md",
+      },
+    },
   });
+}
+
+/** Presigned upload targets, keyed by the filenames you asked for. */
+export function getDocAiUploadUrls(
+  jobId: string,
+  filenames: string[],
+): Promise<DocAiFileLinks> {
+  return docAi<DocAiFileLinks>("/upload-files", {
+    method: "POST",
+    body: { job_id: jobId, files: filenames },
+  });
+}
+
+/** Blob storage wants the block-blob header; it is not a Sarvam endpoint. */
+export async function putToUploadUrl(url: string, body: ArrayBuffer): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "PUT",
+      headers: { "x-ms-blob-type": "BlockBlob" },
+      body,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (cause) {
+    asNetworkError(cause);
+  }
+  if (!response.ok) {
+    throw new SarvamError("upstream_error", "The document could not be staged for reading.");
+  }
+}
+
+export function startDocAiJob(jobId: string): Promise<DocAiJob> {
+  return docAi<DocAiJob>(`/${jobId}/start`, { method: "POST" });
+}
+
+export function getDocAiJobStatus(jobId: string): Promise<DocAiJob> {
+  return docAi<DocAiJob>(`/${jobId}/status`);
+}
+
+export function getDocAiDownloadUrls(jobId: string): Promise<DocAiFileLinks> {
+  return docAi<DocAiFileLinks>(`/${jobId}/download-files`, { method: "POST" });
+}
+
+/** Fetches the result archive Sarvam produced for a finished job. */
+export async function fetchDocAiArchive(url: string): Promise<Uint8Array> {
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  } catch (cause) {
+    asNetworkError(cause);
+  }
+  if (!response.ok) {
+    throw new SarvamError("upstream_error", "The extracted document could not be downloaded.");
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Translation                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Hard cap for `sarvam-translate:v1`. Callers must chunk below this. */
+export const TRANSLATE_MAX_CHARS = 2000;
+
+export async function translate(
+  request: SarvamTranslateRequest,
+): Promise<SarvamTranslateResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/translate`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: request.model ?? "sarvam-translate:v1",
+        input: request.input,
+        source_language_code: request.source_language_code,
+        target_language_code: request.target_language_code,
+        mode: request.mode ?? "formal",
+        numerals_format: request.numerals_format ?? "international",
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (cause) {
+    asNetworkError(cause);
+  }
+
+  if (!response.ok) await failFromResponse(response);
+
+  const data = (await response.json()) as Partial<SarvamTranslateResponse>;
+  return {
+    request_id: data.request_id ?? null,
+    translated_text: data.translated_text ?? "",
+    source_language_code: data.source_language_code ?? null,
+  };
 }

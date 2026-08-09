@@ -28,14 +28,17 @@ The key is never sent to the browser. Client code only ever talks to same-origin
 ## Structure
 
 ```
-app/                 layout, page, and route handlers under app/api/
+app/                 layout, page, /new-screen, and route handlers under app/api/
 components/ui/       Button, Container, Logo, Reveal
 components/layout/   Navbar (auto-hiding glass bar), Footer
 components/sections/ Hero, SupportedReports, HowItWorks, ExampleReading, Limits, ClosingCta
 components/composer/ Composer, MicButton, Waveform, FileChip, ReplyPanel
-hooks/               use-audio-recorder, use-report-upload, use-coach-reply
-lib/                 sarvam.ts (all Sarvam calls), stt-transport.ts, audio.ts, files.ts, motion.ts
-types/               sarvam.ts (API shapes), composer.ts (UI state)
+components/workspace/ Workspace, SourcePane, InsightsPane, ReportMarkdown, LanguageSelect
+hooks/               use-audio-recorder, use-report-upload, use-coach-reply,
+                     use-document-workspace, use-report-language, use-split-pane
+lib/                 sarvam.ts (all Sarvam calls), extraction.ts, markdown-translate.ts,
+                     languages.ts, insights.ts, stt-transport.ts, audio.ts, documents.ts
+types/               sarvam.ts (API shapes), composer.ts, workspace.ts (UI state)
 public/audio/        recorder-worklet.js (audio-thread capture)
 server.mjs           Next + the /api/stt/ws relay
 ```
@@ -57,17 +60,41 @@ exists.
 switches to `POST /api/stt`: it cuts utterances on 700 ms of silence and uploads each as a WAV to
 Sarvam's `/speech-to-text`. Same transcripts, one utterance of latency.
 
-**Reports.** `POST /api/reports` validates type and size, then extracts PDF text with `unpdf`.
-Images and scanned PDFs are marked `needsVision` and read by the vision model at question time.
-Nothing is written to disk; the excerpt travels back to the browser and rides along with the question.
+**Reports.** `POST /api/reports` validates type and size, then reads the file: `unpdf` for a
+text-layer PDF, and Sarvam Document AI for photos and scans. Nothing is written to disk; the excerpt
+travels back to the browser and rides along with the question.
 
 **Answers.** `POST /api/chat` builds the coach messages (system prompt in `lib/sarvam.ts`) and streams
 `sarvam-105b-conversations` back as plain text. Sarvam's SSE frames are parsed server side so the
-client just reads a text stream. An image part that the model rejects retries once as text only.
+client just reads a text stream. Sarvam chat takes text only, which is why every image goes through
+Document AI first.
 
 Failure paths are handled in the UI, not swallowed: microphone permission denied, no microphone,
 unsupported browser, network loss mid-transcription, a recording with no speech in it, oversized or
 wrong-typed uploads, unreadable PDFs, and an empty or failed completion.
+
+## /new-screen, the document workspace
+
+A two-pane screen at `/new-screen`: source document on the left, structured insights on the right,
+each scrolling independently, a draggable divider on desktop and Document/Insights tabs on mobile.
+
+Flow: `POST /api/extract` uploads the file to Sarvam Document AI (PDF as-is, images wrapped in a
+ZIP, which is the archive shape that API takes) and returns a job id. The browser polls
+`GET /api/extract/[jobId]` until the job completes, then pulls the Markdown out of the result
+archive. That path is vision-backed, so photographs of handwritten prescriptions are read too.
+`POST /api/insights` streams a structured report over that text: summary, key findings, a results
+table with Test / Value / Reference range / Flag, medications with dosage, red flags, and a plain
+language section. `components/workspace/report-markdown.tsx` maps every Markdown element to a
+designed component and turns flag cells into colour-coded badges.
+
+The language dropdown calls `POST /api/translate`. `lib/markdown-translate.ts` splits the document
+into the smallest translatable units, holds back every heading mark, pipe and bullet on the server,
+translates only prose (skipping pure numbers and units), and reassembles through placeholders, so
+the structure cannot drift. Translations are cached per language for the life of a report and the
+pane dims rather than blanking while one loads.
+
+The landing page composer shares the same reader: text-layer PDFs go through `unpdf`, and photos or
+scans fall through to Document AI.
 
 ## Not built here
 

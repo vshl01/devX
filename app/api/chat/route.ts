@@ -1,5 +1,5 @@
 import { fail } from "@/lib/http";
-import { buildCoachMessages, buildTextOnlyFallback, streamChat } from "@/lib/sarvam";
+import { buildCoachMessages, streamChat } from "@/lib/sarvam";
 import { SarvamError } from "@/types/sarvam";
 
 export const runtime = "nodejs";
@@ -7,21 +7,16 @@ export const dynamic = "force-dynamic";
 
 const MAX_QUESTION_CHARS = 4_000;
 const MAX_EXCERPT_CHARS = 12_000;
-/** Base64 grows by a third, so this caps an image at roughly 6 MB on the wire. */
-const MAX_IMAGE_CHARS = 8_000_000;
 
 interface ChatRequestBody {
   question?: string;
-  report?: {
-    name?: string;
-    excerpt?: string;
-    imageDataUrl?: string;
-  };
+  report?: { name?: string; excerpt?: string };
 }
 
 /**
  * Answers one composer submission. Streams plain text so the hero can render
- * the reply as it arrives.
+ * the reply as it arrives. Report text arrives already extracted, by `unpdf`
+ * for text-layer PDFs and by Document AI for scans and photographs.
  */
 export async function POST(request: Request) {
   let body: ChatRequestBody;
@@ -32,47 +27,21 @@ export async function POST(request: Request) {
   }
 
   const question = (body.question ?? "").slice(0, MAX_QUESTION_CHARS).trim();
-  const hasReport = Boolean(body.report?.name);
+  const name = body.report?.name;
 
-  if (!question && !hasReport) {
+  if (!question && !name) {
     return fail("Ask a question or attach a report.", 400);
   }
 
-  const imageDataUrl = body.report?.imageDataUrl;
-  if (imageDataUrl) {
-    if (imageDataUrl.length > MAX_IMAGE_CHARS) {
-      return fail("That image is too large to read. Try a smaller photo.", 413);
-    }
-    if (!/^data:image\/(png|jpeg|jpg|webp|heic|heif);base64,/.test(imageDataUrl)) {
-      return fail("That image format is not supported.", 415);
-    }
-  }
-
-  const turn = {
+  const messages = buildCoachMessages({
     question,
-    report: hasReport
-      ? {
-          name: body.report!.name!,
-          excerpt: (body.report!.excerpt ?? "").slice(0, MAX_EXCERPT_CHARS),
-          imageDataUrl,
-        }
+    report: name
+      ? { name, excerpt: (body.report?.excerpt ?? "").slice(0, MAX_EXCERPT_CHARS) }
       : undefined,
-  };
+  });
 
   try {
-    let stream: ReadableStream<Uint8Array>;
-    try {
-      stream = await streamChat({ messages: buildCoachMessages(turn) });
-    } catch (cause) {
-      // Some models reject image parts. Retry once on text alone rather than
-      // showing the user a dead end.
-      if (imageDataUrl && cause instanceof SarvamError && cause.code === "unsupported_input") {
-        stream = await streamChat({ messages: buildTextOnlyFallback(turn) });
-      } else {
-        throw cause;
-      }
-    }
-
+    const stream = await streamChat({ messages });
     return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
@@ -96,8 +65,6 @@ function messageFor(error: SarvamError): string {
       return "Too many requests right now. Try again in a moment.";
     case "network_error":
       return "Lost connection to the assistant.";
-    case "unsupported_input":
-      return "That report could not be read. Try a PDF or a clearer photo.";
     default:
       return "The coach could not answer just now.";
   }

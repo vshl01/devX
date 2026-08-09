@@ -20,7 +20,9 @@ export type SarvamLanguageCode =
   | "od-IN"
   | "pa-IN"
   | "ta-IN"
-  | "te-IN";
+  | "te-IN"
+  | "as-IN"
+  | "ur-IN";
 
 export type SarvamSttModel = "saaras:v3" | "saaras:v4";
 
@@ -113,4 +115,61 @@ export class SarvamError extends Error {
     this.code = code;
     this.status = status;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Document AI (OCR and digitisation)                                         */
+/* -------------------------------------------------------------------------- */
+
+export type DocAiJobState =
+  | "Accepted"
+  | "Pending"
+  | "Running"
+  | "Completed"
+  | "PartiallyCompleted"
+  | "Failed";
+
+export interface DocAiJobParameters {
+  /** Primary language on the page. Sarvam still reads mixed-script documents. */
+  language: SarvamLanguageCode;
+  output_format: "md" | "html";
+}
+
+export interface DocAiJob {
+  job_id: string;
+  job_state: DocAiJobState;
+  job_parameters?: DocAiJobParameters;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+/** `upload_urls` and `download_urls` are keyed by filename. */
+export interface DocAiFileLinks {
+  job_id: string;
+  job_state: DocAiJobState;
+  upload_urls?: Record<string, { file_url: string }>;
+  download_urls?: Record<string, { file_url: string }>;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Translation                                                                */
+/* -------------------------------------------------------------------------- */
+
+export type SarvamTranslateModel = "sarvam-translate:v1" | "mayura:v1";
+
+export interface SarvamTranslateRequest {
+  input: string;
+  source_language_code: SarvamLanguageCode | "auto";
+  target_language_code: Exclude<SarvamLanguageCode, "unknown">;
+  model?: SarvamTranslateModel;
+  mode?: "formal" | "modern-colloquial" | "classic-colloquial" | "code-mixed";
+  numerals_format?: "international" | "native";
+}
+
+export interface SarvamTranslateResponse {
+  request_id: string | null;
+  translated_text: string;
+  source_language_code: string | null;
 }

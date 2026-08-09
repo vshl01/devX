@@ -256,6 +256,16 @@
   }
 }
 
+/* Indeterminate progress used while a server stage runs. */
+@keyframes slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 @layer utilities {
   /* Hairline rail used by the "how it works" section. */
   .rail-line {
