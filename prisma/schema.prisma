@@ -28,6 +28,9 @@ model Prescription {
   originalFileName      String
   originalMimeType      String
   originalFileReference String
+  // The uploaded document itself. Held in the database rather than on disk so
+  // the app runs on hosts with a read-only filesystem (Vercel and similar).
+  originalFileData      Bytes?
   status                PrescriptionStatus @default(CREATED)
   sarvamJobId           String?
   sarvamExtractJobId    String?

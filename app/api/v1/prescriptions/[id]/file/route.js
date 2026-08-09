@@ -1,9 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { createRequestId } from '@/lib/utils/logger.js';
 import { handleRouteError } from '@/lib/utils/response.js';
 import { AppError, ErrorCodes } from '@/lib/utils/errors.js';
 import { prisma } from '@/lib/prisma.js';
-import { resolveStoredFilePath } from '@/lib/prescriptions/storage.js';
+import { loadPrescriptionFile } from '@/lib/prescriptions/storage.js';
 
 export const runtime = 'nodejs';
 
@@ -21,7 +20,6 @@ export async function GET(_request, context) {
       select: {
         originalFileName: true,
         originalMimeType: true,
-        originalFileReference: true,
       },
     });
 
@@ -29,8 +27,7 @@ export async function GET(_request, context) {
       throw new AppError(ErrorCodes.PRESCRIPTION_NOT_FOUND, 'Prescription not found.', 404);
     }
 
-    const absolutePath = resolveStoredFilePath(prescription.originalFileReference);
-    const buffer = await readFile(absolutePath);
+    const buffer = await loadPrescriptionFile(id);
     const fileName = prescription.originalFileName || 'prescription';
 
     return new Response(new Uint8Array(buffer), {
