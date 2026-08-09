@@ -1,4 +1,10 @@
 {
+  "info": {
+    "name": "Prescription Intelligence",
+    "_postman_id": "prescription-intelligence-api",
+    "description": "API collection for testing Prescription Intelligence endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
   "item": [
     {
       "name": "Prescription Intelligence",
@@ -8,7 +14,11 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/health"
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            }
           }
         },
         {
@@ -32,7 +42,11 @@
                 }
               ]
             },
-            "url": "{{baseUrl}}/api/v1/prescriptions"
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions"]
+            }
           }
         },
         {
@@ -40,7 +54,23 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}"
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Prescription File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/file",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}", "file"]
+            }
           }
         },
         {
@@ -48,7 +78,11 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/raw"
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/raw",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}", "raw"]
+            }
           }
         },
         {
@@ -63,9 +97,44 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"targetLanguage\": \"kn-IN\"\n}"
+              "raw": "{\n  \"targetLanguage\": \"kn-IN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
-            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/translate"
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/translate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}", "translate"]
+            }
+          }
+        },
+        {
+          "name": "Ask Prescription Question",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"What was my blood pressure?\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/questions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}", "questions"]
+            }
           }
         }
       ]
