@@ -3,8 +3,7 @@
 /* ---------------------------------------------------------------------------
    Design tokens.
    Every colour, radius, shadow and timing on the site resolves from here.
-   Theme is driven by CSS variables + prefers-color-scheme, so components never
-   need a `dark:` variant. One theme for the whole page, always.
+   Light theme only — components use CSS variables, never `dark:` variants.
 --------------------------------------------------------------------------- */
 
 :root {
@@ -77,48 +76,6 @@
   --elevation-lg: 0 28px 64px -32px rgb(12 18 17 / 0.28);
 
   color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: var(--n-950);
-    --surface: var(--n-900);
-    --sunken: #101817;
-    --line: rgb(255 255 255 / 0.09);
-    --line-strong: rgb(255 255 255 / 0.16);
-
-    --ink: #e7edec;
-    --ink-soft: #a3afad;
-    --ink-mute: #808c8b;
-
-    --accent: var(--t-300);
-    --accent-hover: var(--t-200);
-    --accent-soft: rgb(121 185 173 / 0.12);
-    --accent-line: rgb(121 185 173 / 0.28);
-    --on-accent: var(--n-950);
-
-    --danger: #f0a49b;
-    --danger-soft: rgb(163 43 33 / 0.18);
-    --live: #ef7a63;
-
-    --glass-bg: rgb(21 29 28 / 0.6);
-    --glass-border: rgb(255 255 255 / 0.1);
-    --glass-inner: inset 0 1px 0 rgb(255 255 255 / 0.07);
-    --glass-sheen: linear-gradient(
-      to bottom,
-      rgb(255 255 255 / 0.07),
-      rgb(255 255 255 / 0.02) 55%,
-      transparent
-    );
-    --nav-bg-rest: rgb(12 18 17 / 0.5);
-    --nav-bg-lifted: rgb(12 18 17 / 0.72);
-
-    --elevation-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-    --elevation-md: 0 6px 20px -8px rgb(0 0 0 / 0.55);
-    --elevation-lg: 0 28px 64px -32px rgb(0 0 0 / 0.8);
-
-    color-scheme: dark;
-  }
 }
 
 @theme inline {

@@ -41,7 +41,10 @@ export interface UseAudioRecorder {
   /** Live 0 to 1 level, read by the waveform without re-rendering React. */
   levelRef: React.RefObject<number>;
   start: () => Promise<void>;
+  /** End capture and flush remaining audio (submit what was said). */
   stop: () => void;
+  /** End capture and discard — no empty-result callback, ignore late transcripts. */
+  cancel: () => void;
   toggle: () => void;
   dismissError: () => void;
 }
@@ -63,6 +66,7 @@ export function useAudioRecorder({
   const stoppingRef = useRef(false);
   const heardRef = useRef(false);
   const failedRef = useRef(false);
+  const discardRef = useRef(false);
   const utteranceClosingRef = useRef(false);
   const modeRef = useRef(mode);
 
@@ -94,25 +98,43 @@ export function useAudioRecorder({
     levelRef.current = 0;
   }, []);
 
+  const endCapture = useCallback(
+    (opts: { flush: boolean; reportEmpty: boolean }) => {
+      if (stoppingRef.current) return;
+      stoppingRef.current = true;
+      utteranceClosingRef.current = false;
+
+      const wasCapturing = transportRef.current !== null;
+      if (opts.flush) transportRef.current?.flush();
+      transportRef.current?.close();
+      transportRef.current = null;
+
+      teardown();
+      setState((current) => (current === "error" || current === "denied" ? current : "idle"));
+
+      // Silence is a normal outcome, not an error. Say so rather than sit there.
+      if (
+        opts.reportEmpty &&
+        wasCapturing &&
+        !heardRef.current &&
+        !failedRef.current &&
+        !discardRef.current
+      ) {
+        onEmptyResultRef.current?.();
+      }
+      stoppingRef.current = false;
+    },
+    [teardown],
+  );
+
   const stop = useCallback(() => {
-    if (stoppingRef.current) return;
-    stoppingRef.current = true;
-    utteranceClosingRef.current = false;
+    endCapture({ flush: true, reportEmpty: true });
+  }, [endCapture]);
 
-    const wasCapturing = transportRef.current !== null;
-    transportRef.current?.flush();
-    transportRef.current?.close();
-    transportRef.current = null;
-
-    teardown();
-    setState((current) => (current === "error" || current === "denied" ? current : "idle"));
-
-    // Silence is a normal outcome, not an error. Say so rather than sit there.
-    if (wasCapturing && !heardRef.current && !failedRef.current) {
-      onEmptyResultRef.current?.();
-    }
-    stoppingRef.current = false;
-  }, [teardown]);
+  const cancel = useCallback(() => {
+    discardRef.current = true;
+    endCapture({ flush: false, reportEmpty: false });
+  }, [endCapture]);
 
   useEffect(() => {
     stopRef.current = stop;
@@ -124,6 +146,7 @@ export function useAudioRecorder({
     setError(null);
     heardRef.current = false;
     failedRef.current = false;
+    discardRef.current = false;
     utteranceClosingRef.current = false;
 
     if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
@@ -163,10 +186,12 @@ export function useAudioRecorder({
 
     const handlers = {
       onTranscript: (text: string) => {
+        if (discardRef.current) return;
         heardRef.current = true;
         onTranscriptRef.current(text);
       },
       onError: (message: string) => {
+        if (discardRef.current) return;
         failedRef.current = true;
         setError(message);
       },
@@ -279,6 +304,7 @@ export function useAudioRecorder({
     levelRef,
     start,
     stop,
+    cancel,
     toggle,
     dismissError: useCallback(() => setError(null), []),
   };

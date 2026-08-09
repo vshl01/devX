@@ -107,11 +107,13 @@ export async function askPrescriptionQuestion(
     language?: string | null;
     history?: Array<{ role: "user" | "assistant"; text: string }>;
     includeAudio?: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<QuestionAnswer> {
   const response = await fetch(`/api/v1/prescriptions/${id}/questions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: options?.signal,
     body: JSON.stringify({
       question,
       language: options?.language ?? undefined,
