@@ -1,26 +1,278 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ---------------------------------------------------------------------------
+   Design tokens.
+   Every colour, radius, shadow and timing on the site resolves from here.
+   Theme is driven by CSS variables + prefers-color-scheme, so components never
+   need a `dark:` variant. One theme for the whole page, always.
+--------------------------------------------------------------------------- */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  /* Palette: cool neutrals with a faint green cast, one desaturated teal accent */
+  --n-0: #ffffff;
+  --n-25: #fafbfb;
+  --n-50: #f3f6f5;
+  --n-100: #e8ecec;
+  --n-200: #d5dbda;
+  --n-300: #b2bbba;
+  --n-400: #879291;
+  --n-500: #64706f;
+  --n-600: #4a5554;
+  --n-700: #343e3d;
+  --n-800: #212b2a;
+  --n-900: #151d1c;
+  --n-950: #0c1211;
+
+  --t-50: #eef6f4;
+  --t-100: #d5eae5;
+  --t-200: #abd5cc;
+  --t-300: #79b9ad;
+  --t-400: #4c9a8c;
+  --t-500: #2e7f71;
+  --t-600: #21665b;
+  --t-700: #1b5049;
+  --t-800: #163e39;
+
+  /* Semantic surfaces */
+  --canvas: var(--n-25);
+  --surface: var(--n-0);
+  --sunken: var(--n-50);
+  --line: rgb(12 18 17 / 0.09);
+  --line-strong: rgb(12 18 17 / 0.16);
+
+  /* Semantic text */
+  --ink: var(--n-900);
+  --ink-soft: var(--n-600);
+  --ink-mute: var(--n-500);
+
+  /* Accent */
+  --accent: var(--t-600);
+  --accent-hover: var(--t-700);
+  --accent-soft: var(--t-50);
+  --accent-line: rgb(33 102 91 / 0.22);
+  --on-accent: #ffffff;
+
+  /* Status */
+  --danger: #a32b21;
+  --danger-soft: #fdeeec;
+  --live: #c4432f;
+
+  /* Glass (accent material, used on navbar + composer only) */
+  --glass-bg: rgb(255 255 255 / 0.6);
+  --glass-border: rgb(12 18 17 / 0.08);
+  --glass-inner: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --glass-blur: 20px;
+  --glass-sheen: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.55),
+    rgb(255 255 255 / 0.12) 55%,
+    transparent
+  );
+  --nav-bg-rest: rgb(250 251 251 / 0.55);
+  --nav-bg-lifted: rgb(250 251 251 / 0.78);
+
+  /* Elevation, tinted to the canvas hue rather than pure black */
+  --elevation-sm: 0 1px 2px rgb(12 18 17 / 0.05);
+  --elevation-md: 0 6px 20px -8px rgb(12 18 17 / 0.14);
+  --elevation-lg: 0 28px 64px -32px rgb(12 18 17 / 0.28);
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: var(--n-950);
+    --surface: var(--n-900);
+    --sunken: #101817;
+    --line: rgb(255 255 255 / 0.09);
+    --line-strong: rgb(255 255 255 / 0.16);
+
+    --ink: #e7edec;
+    --ink-soft: #a3afad;
+    --ink-mute: #808c8b;
+
+    --accent: var(--t-300);
+    --accent-hover: var(--t-200);
+    --accent-soft: rgb(121 185 173 / 0.12);
+    --accent-line: rgb(121 185 173 / 0.28);
+    --on-accent: var(--n-950);
+
+    --danger: #f0a49b;
+    --danger-soft: rgb(163 43 33 / 0.18);
+    --live: #ef7a63;
+
+    --glass-bg: rgb(21 29 28 / 0.6);
+    --glass-border: rgb(255 255 255 / 0.1);
+    --glass-inner: inset 0 1px 0 rgb(255 255 255 / 0.07);
+    --glass-sheen: linear-gradient(
+      to bottom,
+      rgb(255 255 255 / 0.07),
+      rgb(255 255 255 / 0.02) 55%,
+      transparent
+    );
+    --nav-bg-rest: rgb(12 18 17 / 0.5);
+    --nav-bg-lifted: rgb(12 18 17 / 0.72);
+
+    --elevation-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --elevation-md: 0 6px 20px -8px rgb(0 0 0 / 0.55);
+    --elevation-lg: 0 28px 64px -32px rgb(0 0 0 / 0.8);
+
+    color-scheme: dark;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-mute: var(--ink-mute);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
+  --color-on-accent: var(--on-accent);
+
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-live: var(--live);
+
+  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* One radius scale. Rule: interactive controls are pill, input and card
+     surfaces are `lg`, controls nested inside a surface are `md`. */
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  --shadow-sm: var(--elevation-sm);
+  --shadow-md: var(--elevation-md);
+  --shadow-lg: var(--elevation-lg);
+
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--canvas);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--accent-soft);
+    color: var(--ink);
+  }
+
+  /* One focus treatment everywhere, always visible for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Frosted-glass approximation (backdrop-filter + layered border + inner
+     highlight). Not an official platform material. Accent surfaces only. */
+  .glass {
+    background-color: var(--glass-bg);
+    border-color: var(--glass-border);
+    backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+    box-shadow: var(--glass-inner), var(--elevation-md);
+  }
+
+  /* The navbar sits over changing content, so it blurs harder than the
+     composer and gains weight only once the page has moved. */
+  .glass-nav {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--nav-bg-rest);
+    backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  }
+
+  .glass-nav[data-lifted="true"] {
+    background-color: var(--nav-bg-lifted);
+    box-shadow: var(--glass-inner), 0 1px 24px -12px rgb(12 18 17 / 0.3);
+  }
+
+  /* Refraction highlight along the top edge. */
+  .glass-nav::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--glass-sheen);
+    pointer-events: none;
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass,
+    .glass-nav {
+      background-color: var(--surface);
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .glass,
+    .glass-nav {
+      background-color: var(--surface);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    .glass-nav::before {
+      display: none;
+    }
+  }
+}
+
+@layer utilities {
+  /* Hairline rail used by the "how it works" section. */
+  .rail-line {
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      var(--line-strong) 12%,
+      var(--line-strong) 88%,
+      transparent
+    );
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
