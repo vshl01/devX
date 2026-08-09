@@ -2,7 +2,13 @@ import { Pulse } from "@phosphor-icons/react/dist/ssr";
 
 import { cn } from "@/lib/utils";
 
-export function Logo({ className }: { className?: string }) {
+export function Logo({
+  className,
+  name = "Doctor AI",
+}: {
+  className?: string;
+  name?: string;
+}) {
   return (
     <span className={cn("flex items-center gap-2.5", className)}>
       <span
@@ -11,7 +17,7 @@ export function Logo({ className }: { className?: string }) {
       >
         <Pulse size={18} weight="bold" />
       </span>
-      <span className="text-[17px] font-semibold tracking-tight text-ink">Lucid</span>
+      <span className="text-[17px] font-semibold tracking-tight text-ink">{name}</span>
     </span>
   );
 }

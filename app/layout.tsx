@@ -16,14 +16,17 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Lucid, your medical report explained in plain language",
+  title: {
+    default: "Doctor AI Front Desk",
+    template: "%s · Doctor AI",
+  },
   description:
-    "Upload a lab result or scan report and ask what it means, by voice or by typing. Lucid explains every marker in plain language. It does not diagnose or prescribe.",
-  applicationName: "Lucid",
+    "Book appointments with a multilingual AI receptionist and understand handwritten prescriptions — powered by Sarvam AI.",
+  applicationName: "Doctor AI Front Desk",
   openGraph: {
-    title: "Lucid, your medical report explained in plain language",
+    title: "Doctor AI Front Desk",
     description:
-      "Upload a lab result or scan report and ask what it means, by voice or by typing.",
+      "Book appointments by voice and understand prescriptions in your language.",
     type: "website",
   },
 };

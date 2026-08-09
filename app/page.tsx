@@ -1,25 +1,45 @@
-import { Footer } from "@/components/layout/footer";
-import { Navbar } from "@/components/layout/navbar";
-import { ClosingCta } from "@/components/sections/closing-cta";
-import { ExampleReading } from "@/components/sections/example-reading";
-import { Hero } from "@/components/sections/hero";
-import { HowItWorks } from "@/components/sections/how-it-works";
-import { Limits } from "@/components/sections/limits";
-import { SupportedReports } from "@/components/sections/supported-reports";
+import type { Metadata } from "next";
 
-export default function Home() {
+import { LandingHero } from "@/components/landing/hero";
+import {
+  AskPreviewSection,
+  CallPreviewSection,
+  FeaturesSection,
+  FinalCtaSection,
+  JourneySection,
+  LanguagesSection,
+  PrescriptionPreviewSection,
+  ProblemSection,
+  SarvamSection,
+  TrustSection,
+} from "@/components/landing/sections";
+import { SiteFooter } from "@/components/landing/site-footer";
+import { SiteHeader } from "@/components/landing/site-header";
+
+export const metadata: Metadata = {
+  title: "Doctor AI Front Desk — Book appointments. Understand prescriptions.",
+  description:
+    "Multilingual AI front desk for clinics: book appointments by voice and understand handwritten prescriptions with Sarvam AI.",
+};
+
+export default function HomePage() {
   return (
     <>
-      <Navbar />
+      <SiteHeader />
       <main className="flex-1">
-        <Hero />
-        <SupportedReports />
-        <HowItWorks />
-        <ExampleReading />
-        <Limits />
-        <ClosingCta />
+        <LandingHero />
+        <ProblemSection />
+        <FeaturesSection />
+        <JourneySection />
+        <PrescriptionPreviewSection />
+        <AskPreviewSection />
+        <LanguagesSection />
+        <SarvamSection />
+        <TrustSection />
+        <CallPreviewSection />
+        <FinalCtaSection />
       </main>
-      <Footer />
+      <SiteFooter />
     </>
   );
 }
