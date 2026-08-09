@@ -1,0 +1,84 @@
+{
+  "item": [
+    {
+      "name": "Prescription Intelligence",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/health"
+          }
+        },
+        {
+          "name": "Upload Prescription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "targetLanguage",
+                  "value": "kn-IN",
+                  "type": "text",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/prescriptions"
+          }
+        },
+        {
+          "name": "Get Prescription",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}"
+          }
+        },
+        {
+          "name": "Get Raw Digitised Content",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/raw"
+          }
+        },
+        {
+          "name": "Translate Prescription",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetLanguage\": \"kn-IN\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/translate"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "prescriptionId",
+      "value": ""
+    }
+  ]
+}
