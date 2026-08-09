@@ -83,8 +83,11 @@ wrong-typed uploads, unreadable PDFs, and an empty or failed completion.
 A two-pane screen at `/new-screen`: source document on the left, structured insights on the right,
 each scrolling independently, a draggable divider on desktop and Document/Insights tabs on mobile.
 
-Flow: `POST /api/extract` uploads the file to Sarvam Document AI (PDF as-is, images wrapped in a
-ZIP, which is the archive shape that API takes) and returns a job id. The browser polls
+Flow: `POST /api/extract` uploads the file to Sarvam Document AI and returns a job id. Doc AI decides
+what it will read from the filename extension and accepts only `.pdf`, `.jpg`, `.jpeg` and `.png`, so
+the name it receives is rebuilt from the content type: a file called `scan` or `photo.HEIC` cannot be
+rejected for the wrong reason. HEIC and WebP are re-encoded to JPEG in the browser
+(`lib/image-convert.ts`) before upload, since Sarvam cannot read either. The browser polls
 `GET /api/extract/[jobId]` until the job completes, then pulls the Markdown out of the result
 archive. That path is vision-backed, so photographs of handwritten prescriptions are read too.
 `POST /api/insights` streams a structured report over that text: summary, key findings, a results

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { unzipSync, zipSync } from "fflate";
+import { unzipSync } from "fflate";
 
 import {
   createDocAiJob,
@@ -23,8 +23,18 @@ import { SarvamError, type DocAiJobState, type SarvamLanguageCode } from "@/type
  * job finishes.
  */
 
-/** Doc AI takes one PDF, or one ZIP of JPEG/PNG images. */
-const PDF_MIME = "application/pdf";
+/**
+ * Doc AI decides what it will read from the filename extension, and it accepts
+ * exactly these. It rejects anything else at upload time, including WebP and
+ * HEIC, so the extension is derived from the content type here rather than
+ * trusted from whatever the browser happened to call the file.
+ */
+const UPLOAD_EXTENSION: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+};
 
 export type ExtractionPhase = "queued" | "reading" | "done" | "failed";
 
@@ -37,35 +47,28 @@ export interface ExtractionProgress {
   message?: string;
 }
 
-function safeName(name: string, fallback: string): string {
-  const cleaned = name
-    .replace(/[^\w.\- ]+/g, "")
-    .replace(/\s+/g, "_")
-    .slice(-80);
-  return cleaned.length > 3 ? cleaned : fallback;
-}
-
 /**
- * Doc AI accepts PDFs directly. Anything else (JPEG, PNG, HEIC photos of a
- * prescription) is wrapped in a single-entry ZIP, which is the archive shape
- * the API documents.
+ * Builds the name Sarvam sees. The stem is sanitised for the blob store and the
+ * extension always comes from the content type, so a file called "scan" or
+ * "photo.HEIC" cannot be rejected for the wrong reason.
  */
-function toUploadPayload(
-  file: { name: string; type: string },
-  bytes: Uint8Array,
-): { filename: string; body: Uint8Array } {
-  if (file.type === PDF_MIME) {
-    return { filename: safeName(file.name, "document.pdf"), body: bytes };
+function uploadName(originalName: string, mimeType: string): string {
+  const extension = UPLOAD_EXTENSION[mimeType];
+  if (!extension) {
+    throw new SarvamError(
+      "unsupported_input",
+      "Sarvam reads PDF, JPG and PNG. Convert this file and try again.",
+      415,
+    );
   }
 
-  const extension = file.type.includes("png")
-    ? "png"
-    : file.type.includes("webp")
-      ? "webp"
-      : "jpg";
-  const inner = safeName(file.name, `page.${extension}`);
-  const zipped = zipSync({ [inner]: bytes }, { level: 0 });
-  return { filename: "pages.zip", body: zipped };
+  const stem = originalName
+    .replace(/\.[^.]*$/, "")
+    .replace(/[^\w\- ]+/g, "")
+    .replace(/\s+/g, "_")
+    .slice(0, 60);
+
+  return `${stem.length > 0 ? stem : "document"}.${extension}`;
 }
 
 export interface BeginExtractionInput {
@@ -82,9 +85,10 @@ export async function beginExtraction({
   bytes,
   language = "en-IN",
 }: BeginExtractionInput): Promise<{ jobId: string }> {
-  const job = await createDocAiJob({ language, output_format: "md" });
-  const { filename, body } = toUploadPayload({ name, type }, bytes);
+  // Validated before a job is created, so a bad file costs nothing upstream.
+  const filename = uploadName(name, type);
 
+  const job = await createDocAiJob({ language, output_format: "md" });
   const links = await getDocAiUploadUrls(job.job_id, [filename]);
   const target = links.upload_urls?.[filename]?.file_url;
   if (!target) {
@@ -93,7 +97,7 @@ export async function beginExtraction({
 
   await putToUploadUrl(
     target,
-    body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer,
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
   );
   await startDocAiJob(job.job_id);
 

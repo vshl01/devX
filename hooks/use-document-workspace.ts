@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { validateDocument } from "@/lib/documents";
+import { toReadableDocument, UnreadableImageError } from "@/lib/image-convert";
 import type { SessionSnapshot } from "@/types/conversation";
 import type {
   ExtractionStartResponse,
@@ -295,16 +296,43 @@ export function useDocumentWorkspace({
       }
 
       lastFileRef.current = file;
+
+      // The preview shows the original; Sarvam gets a format it can read.
       const previewUrl = URL.createObjectURL(file);
       previewRef.current = previewUrl;
 
-      upload(file, {
-        name: file.name,
-        sizeBytes: file.size,
-        contentType: file.type,
-        kind: check.kind,
-        previewUrl,
+      setState({
+        ...IDLE,
+        phase: "uploading",
+        document: {
+          name: file.name,
+          sizeBytes: file.size,
+          contentType: file.type,
+          kind: check.kind,
+          previewUrl,
+        },
       });
+
+      void toReadableDocument(file)
+        .then((readable) =>
+          upload(readable, {
+            name: file.name,
+            sizeBytes: file.size,
+            contentType: file.type,
+            kind: check.kind,
+            previewUrl,
+          }),
+        )
+        .catch((cause) => {
+          setState((current) => ({
+            ...current,
+            phase: "error",
+            message:
+              cause instanceof UnreadableImageError
+                ? cause.message
+                : "That file could not be prepared for reading.",
+          }));
+        });
     },
     [cancel, releasePreview, upload],
   );

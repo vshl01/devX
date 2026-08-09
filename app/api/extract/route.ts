@@ -68,8 +68,15 @@ export async function POST(request: Request) {
     });
   } catch (cause) {
     if (cause instanceof SarvamError) {
+      // The upstream detail never reaches the browser, so it goes to the log.
+      console.error("[extract] sarvam rejected the upload", {
+        code: cause.code,
+        detail: cause.message,
+        file: { name: file.name, type: file.type, size: file.size },
+      });
       return fail(messageFor(cause), cause.status, cause.code);
     }
+    console.error("[extract] unexpected failure", cause);
     return fail("The document could not be sent for reading.", 500);
   }
 }
@@ -86,6 +93,10 @@ function messageFor(error: SarvamError): string {
       return "Too many documents right now. Try again in a moment.";
     case "network_error":
       return "Could not reach the document reader.";
+    case "unsupported_input":
+      return error.message;
+    case "unauthorized":
+      return "The document reader rejected this deployment's API key.";
     default:
       return "The document could not be sent for reading.";
   }
