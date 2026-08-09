@@ -15,13 +15,20 @@ import type { SarvamLanguageCode } from "@/types/sarvam";
 const FRAME_MS = 250;
 const FRAME_SAMPLES = (TARGET_SAMPLE_RATE * FRAME_MS) / 1000;
 
-/** Silence longer than this ends an utterance for the REST fallback. */
-const SILENCE_MS = 700;
+/** Continuous dictation (composer): short pause splits segments but keeps mic open. */
+const CONTINUOUS_SILENCE_MS = 700;
+/** One-shot voice chat: longer pause means "user finished speaking" → stop mic. */
+const UTTERANCE_SILENCE_MS = 1100;
 const MAX_UTTERANCE_MS = 12_000;
 const SILENCE_RMS = 0.012;
 
 export interface UseAudioRecorderOptions {
   languageCode?: SarvamLanguageCode;
+  /**
+   * `continuous` — keep listening (landing composer).
+   * `utterance` — stop the mic after one spoken question (Ask Your Prescription).
+   */
+  mode?: "continuous" | "utterance";
   /** Called with each finalised piece of transcript, in order. */
   onTranscript: (text: string) => void;
   /** Called when a whole recording session produced no transcript at all. */
@@ -41,6 +48,7 @@ export interface UseAudioRecorder {
 
 export function useAudioRecorder({
   languageCode = "unknown",
+  mode = "continuous",
   onTranscript,
   onEmptyResult,
 }: UseAudioRecorderOptions): UseAudioRecorder {
@@ -55,14 +63,22 @@ export function useAudioRecorder({
   const stoppingRef = useRef(false);
   const heardRef = useRef(false);
   const failedRef = useRef(false);
+  const utteranceClosingRef = useRef(false);
+  const modeRef = useRef(mode);
 
   // Kept in refs so the audio callbacks never close over stale handlers.
   const onTranscriptRef = useRef(onTranscript);
   const onEmptyResultRef = useRef(onEmptyResult);
+  const stopRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
     onEmptyResultRef.current = onEmptyResult;
   }, [onEmptyResult, onTranscript]);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   const teardown = useCallback(() => {
     nodeRef.current?.port.close();
@@ -81,6 +97,7 @@ export function useAudioRecorder({
   const stop = useCallback(() => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
+    utteranceClosingRef.current = false;
 
     const wasCapturing = transportRef.current !== null;
     transportRef.current?.flush();
@@ -97,12 +114,17 @@ export function useAudioRecorder({
     stoppingRef.current = false;
   }, [teardown]);
 
+  useEffect(() => {
+    stopRef.current = stop;
+  }, [stop]);
+
   const start = useCallback(async () => {
     if (state === "recording" || state === "requesting") return;
 
     setError(null);
     heardRef.current = false;
     failedRef.current = false;
+    utteranceClosingRef.current = false;
 
     if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setState("unsupported");
@@ -188,7 +210,12 @@ export function useAudioRecorder({
     let utteranceMs = 0;
     let voiced = false;
 
+    const silenceLimit =
+      modeRef.current === "utterance" ? UTTERANCE_SILENCE_MS : CONTINUOUS_SILENCE_MS;
+
     node.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      if (utteranceClosingRef.current || stoppingRef.current) return;
+
       const chunk = downsample(event.data, context.sampleRate);
       const loudness = rms(chunk);
 
@@ -214,12 +241,19 @@ export function useAudioRecorder({
         transportRef.current?.push(toPcm16(merged));
       }
 
-      const endOfUtterance = voiced && silenceMs >= SILENCE_MS;
+      const endOfUtterance = voiced && silenceMs >= silenceLimit;
       if (endOfUtterance || utteranceMs >= MAX_UTTERANCE_MS) {
         transportRef.current?.flush();
         silenceMs = 0;
         utteranceMs = 0;
         voiced = false;
+
+        // Voice-chat turn: close the mic so we do not keep capturing while answering.
+        if (modeRef.current === "utterance" && !utteranceClosingRef.current) {
+          utteranceClosingRef.current = true;
+          // Let flush travel before tearing down the transport.
+          window.setTimeout(() => stopRef.current(), 120);
+        }
       }
     };
 
@@ -233,7 +267,7 @@ export function useAudioRecorder({
   }, [languageCode, state]);
 
   const toggle = useCallback(() => {
-    if (state === "recording") stop();
+    if (state === "recording" || state === "requesting") stop();
     else void start();
   }, [start, state, stop]);
 

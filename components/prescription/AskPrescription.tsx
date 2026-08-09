@@ -30,48 +30,92 @@ type Message = {
   audioUrl?: string | null;
 };
 
+type VoicePhase = "idle" | "listening" | "processing" | "speaking";
+
 export function AskPrescription({
   prescriptionId,
   data,
   disabled,
-  language = "en-IN",
 }: {
   prescriptionId: string | null;
   data: CanonicalPrescription | null;
   disabled?: boolean;
+  /** Unused: answers follow the spoken/typed question language. */
   language?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "listening" | "processing">("idle");
+  const [phase, setPhase] = useState<VoicePhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const audioUrlsRef = useRef<string[]>([]);
+  const playbackRef = useRef<HTMLAudioElement | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const phaseRef = useRef<VoicePhase>("idle");
+  const askInFlightRef = useRef(false);
   const reduced = useReducedMotion();
   const titleId = useId();
   const suggestions = buildSuggestedQuestions(data);
 
+  const busy = phase === "processing" || phase === "speaking";
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
   const cleanupAudioUrls = useCallback(() => {
+    playbackRef.current?.pause();
+    playbackRef.current = null;
     for (const url of audioUrlsRef.current) URL.revokeObjectURL(url);
     audioUrlsRef.current = [];
   }, []);
 
   useEffect(() => () => cleanupAudioUrls(), [cleanupAudioUrls]);
 
+  const stopPlayback = useCallback(() => {
+    if (playbackRef.current) {
+      playbackRef.current.pause();
+      playbackRef.current = null;
+    }
+  }, []);
+
+  const playResponseAudio = useCallback(
+    (audioUrl: string) =>
+      new Promise<void>((resolve) => {
+        stopPlayback();
+        const audio = new Audio(audioUrl);
+        playbackRef.current = audio;
+        const finish = () => {
+          if (playbackRef.current === audio) playbackRef.current = null;
+          resolve();
+        };
+        audio.addEventListener("ended", finish, { once: true });
+        audio.addEventListener("error", finish, { once: true });
+        void audio.play().catch(() => finish());
+      }),
+    [stopPlayback],
+  );
+
   const ask = useCallback(
     async (question: string, withAudio = false) => {
       const trimmed = question.trim();
-      if (!trimmed || !prescriptionId || busy) return;
+      if (!trimmed || !prescriptionId) return;
+      if (askInFlightRef.current) return;
+      if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
 
+      askInFlightRef.current = true;
       setError(null);
-      setBusy(true);
       setPhase("processing");
       setOpen(true);
       setInput("");
+      stopPlayback();
 
-      const history = messages.slice(-8).map((m) => ({
+      const history = messagesRef.current.slice(-8).map((m) => ({
         role: m.role,
         text: m.text,
       }));
@@ -79,8 +123,9 @@ export function AskPrescription({
       setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
 
       try {
+        // Language is detected from the question text on the server.
         const result = await askPrescriptionQuestion(prescriptionId, trimmed, {
-          language,
+          language: null,
           history,
           includeAudio: withAudio,
         });
@@ -107,8 +152,8 @@ export function AskPrescription({
         ]);
 
         if (audioUrl) {
-          const audio = new Audio(audioUrl);
-          void audio.play().catch(() => {});
+          setPhase("speaking");
+          await playResponseAudio(audioUrl);
         }
       } catch (cause) {
         const message =
@@ -117,35 +162,86 @@ export function AskPrescription({
             : "We couldn't process your question. Please try again.";
         setError(message);
       } finally {
-        setBusy(false);
+        askInFlightRef.current = false;
         setPhase("idle");
       }
     },
-    [busy, language, messages, prescriptionId],
+    [playResponseAudio, prescriptionId, stopPlayback],
   );
 
+  const askRef = useRef(ask);
+  useEffect(() => {
+    askRef.current = ask;
+  }, [ask]);
+
   const recorder = useAudioRecorder({
-    languageCode: language.startsWith("en") ? "unknown" : (language as never),
+    languageCode: "unknown",
+    mode: "utterance",
     onTranscript: (text) => {
+      if (askInFlightRef.current) return;
+      if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
+      const cleaned = text.trim();
+      if (!cleaned) return;
       setPhase("processing");
-      void ask(text, true);
+      void askRef.current(cleaned, true);
     },
     onEmptyResult: () => {
+      if (askInFlightRef.current) return;
       setPhase("idle");
-      setError("We did not catch that. Please try again.");
+      setError("We did not catch that. Tap the mic and try again.");
     },
   });
 
+  const recorderStopRef = useRef(recorder.stop);
   useEffect(() => {
-    if (recorder.state === "recording") setPhase("listening");
+    recorderStopRef.current = recorder.stop;
+  }, [recorder.stop]);
+
+  useEffect(() => {
+    if (recorder.state === "recording") {
+      setPhase((current) => (current === "idle" ? "listening" : current));
+    }
   }, [recorder.state]);
+
+  // Mic must stay closed while we process or speak the answer.
+  useEffect(() => {
+    if (phase === "processing" || phase === "speaking") {
+      recorderStopRef.current();
+    }
+  }, [phase]);
 
   useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, busy, open]);
+  }, [messages, phase, open]);
+
+  const closeChat = useCallback(() => {
+    recorderStopRef.current();
+    stopPlayback();
+    askInFlightRef.current = false;
+    setPhase("idle");
+    setOpen(false);
+  }, [stopPlayback]);
+
+  const toggleMic = useCallback(() => {
+    if (disabled || !prescriptionId) return;
+    if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
+
+    setOpen(true);
+    setError(null);
+
+    if (recorder.state === "recording" || recorder.state === "requesting") {
+      recorder.stop();
+      setPhase("idle");
+      return;
+    }
+
+    setPhase("listening");
+    void recorder.start();
+  }, [disabled, prescriptionId, recorder]);
 
   const launcherDisabled = disabled || !prescriptionId;
+  const micBusy = phase === "processing" || phase === "speaking";
 
   return (
     <>
@@ -156,20 +252,17 @@ export function AskPrescription({
               Ask Your Prescription
             </h2>
             <p className="mt-0.5 text-sm text-ink-soft">
-              Ask anything written in your prescription — in your language.
+              Tap the mic, ask in any language, then wait for the answer before speaking again.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <MicButton
-              state={launcherDisabled ? "unsupported" : recorder.state}
-              levelRef={recorder.levelRef}
-              onToggle={() => {
-                if (launcherDisabled) return;
-                setOpen(true);
-                setPhase(recorder.state === "recording" ? "idle" : "listening");
-                recorder.toggle();
-              }}
-            />
+            <div className={cn(micBusy && "pointer-events-none opacity-45")}>
+              <MicButton
+                state={launcherDisabled ? "unsupported" : recorder.state}
+                levelRef={recorder.levelRef}
+                onToggle={toggleMic}
+              />
+            </div>
             <Button
               type="button"
               variant="secondary"
@@ -182,8 +275,19 @@ export function AskPrescription({
           </div>
         </div>
 
-        {phase === "listening" ? (
-          <p className="mt-3 text-sm font-medium text-live">Listening…</p>
+        {phase !== "idle" ? (
+          <p
+            className={cn(
+              "mt-3 text-sm font-medium",
+              phase === "listening" ? "text-live" : "text-ink-soft",
+            )}
+          >
+            {phase === "listening"
+              ? "Listening… speak your question"
+              : phase === "processing"
+                ? "Checking your prescription…"
+                : "Speaking answer…"}
+          </p>
         ) : null}
 
         {!launcherDisabled && suggestions.length > 0 && messages.length === 0 ? (
@@ -192,8 +296,9 @@ export function AskPrescription({
               <button
                 key={q}
                 type="button"
-                onClick={() => void ask(q)}
-                className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft transition-[background-color,border-color,color] duration-150 ease-out-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent"
+                disabled={busy}
+                onClick={() => void ask(q, false)}
+                className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft transition-[background-color,border-color,color] duration-150 ease-out-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent disabled:opacity-50"
               >
                 {q}
               </button>
@@ -210,7 +315,7 @@ export function AskPrescription({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: reduced ? 0 : 0.18, ease: EASE_OUT_SOFT }}
-            onClick={() => setOpen(false)}
+            onClick={closeChat}
           >
             <motion.div
               role="dialog"
@@ -229,12 +334,12 @@ export function AskPrescription({
                     Ask Your Prescription
                   </h2>
                   <p className="text-xs text-ink-mute">
-                    Answers only from your prescription · multilingual
+                    You speak → answer plays → then you can speak again
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setOpen(false)}
+                  onClick={closeChat}
                   className="flex size-8 items-center justify-center rounded-full text-ink-soft hover:bg-sunken hover:text-ink"
                   aria-label="Close"
                 >
@@ -243,19 +348,20 @@ export function AskPrescription({
               </header>
 
               <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-                {messages.length === 0 && !busy ? (
+                {messages.length === 0 && phase === "idle" ? (
                   <div className="space-y-4">
                     <p className="text-sm text-ink-soft">
-                      Ask about vitals, medicines, dosage, timing, or follow-up written on this
-                      prescription — in English or an Indian language.
+                      Tap the mic and ask about medicines, dosage, or vitals. Replies stay grounded
+                      in your prescription and match the language you used.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {suggestions.map((q) => (
                         <button
                           key={q}
                           type="button"
-                          onClick={() => void ask(q)}
-                          className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent"
+                          disabled={busy}
+                          onClick={() => void ask(q, false)}
+                          className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent disabled:opacity-50"
                         >
                           {q}
                         </button>
@@ -294,9 +400,13 @@ export function AskPrescription({
                       <button
                         type="button"
                         className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:border-accent-line hover:text-accent"
+                        disabled={phase === "processing"}
                         onClick={() => {
-                          const audio = new Audio(message.audioUrl!);
-                          void audio.play().catch(() => {});
+                          if (phaseRef.current === "processing" || askInFlightRef.current) return;
+                          setPhase("speaking");
+                          void playResponseAudio(message.audioUrl!).finally(() => {
+                            if (!askInFlightRef.current) setPhase("idle");
+                          });
                         }}
                       >
                         <SpeakerHigh size={14} aria-hidden /> Play response
@@ -305,12 +415,21 @@ export function AskPrescription({
                   </div>
                 ))}
 
-                {busy ? (
+                {phase !== "idle" ? (
                   <div className="inline-flex items-center gap-2 rounded-lg bg-sunken px-3 py-2 text-sm text-ink-soft">
-                    <SpinnerGap size={14} className="animate-spin" aria-hidden />
-                    {phase === "listening"
-                      ? "Listening…"
-                      : "Checking your prescription…"}
+                    {phase === "listening" ? (
+                      <>
+                        <span className="size-2 animate-pulse rounded-full bg-live" aria-hidden />
+                        Listening… tap mic again to cancel
+                      </>
+                    ) : (
+                      <>
+                        <SpinnerGap size={14} className="animate-spin" aria-hidden />
+                        {phase === "speaking"
+                          ? "Speaking answer…"
+                          : "Checking your prescription…"}
+                      </>
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -323,17 +442,17 @@ export function AskPrescription({
                 className="flex items-end gap-2 border-t border-line p-3"
                 onSubmit={(e) => {
                   e.preventDefault();
+                  if (busy) return;
                   void ask(input, false);
                 }}
               >
-                <MicButton
-                  state={recorder.state}
-                  levelRef={recorder.levelRef}
-                  onToggle={() => {
-                    setPhase(recorder.state === "recording" ? "idle" : "listening");
-                    recorder.toggle();
-                  }}
-                />
+                <div className={cn(micBusy && "pointer-events-none opacity-45")}>
+                  <MicButton
+                    state={recorder.state}
+                    levelRef={recorder.levelRef}
+                    onToggle={toggleMic}
+                  />
+                </div>
                 <label className="sr-only" htmlFor="ask-prescription-input">
                   Ask a question
                 </label>
@@ -341,9 +460,15 @@ export function AskPrescription({
                   id="ask-prescription-input"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask a question…"
+                  placeholder={
+                    phase === "speaking"
+                      ? "Wait for the answer to finish…"
+                      : phase === "processing"
+                        ? "Processing…"
+                        : "Ask a question…"
+                  }
                   disabled={busy}
-                  className="h-11 flex-1 rounded-full border border-line-strong bg-sunken px-4 text-sm text-ink outline-none placeholder:text-ink-mute focus:border-accent-line"
+                  className="h-11 flex-1 rounded-full border border-line-strong bg-sunken px-4 text-sm text-ink outline-none placeholder:text-ink-mute focus:border-accent-line disabled:opacity-60"
                 />
                 <button
                   type="submit"
