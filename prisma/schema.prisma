@@ -38,9 +38,15 @@ model Prescription {
   targetLanguage        String?
   errorCode             String?
   errorMessage          String?
+  // Links a prescription to the phone number that will call the AI
+  // receptionist, so the call agent can look up prescription context
+  // for that caller. Nullable: not every prescription upload has one yet.
+  patientPhone          String?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
   translations          PrescriptionTranslation[]
+
+  @@index([patientPhone])
 }
 
 model PrescriptionTranslation {
@@ -54,4 +60,46 @@ model PrescriptionTranslation {
 
   @@unique([prescriptionId, targetLanguage])
   @@index([prescriptionId])
+}
+
+model Doctor {
+  id             String        @id @default(uuid())
+  name           String
+  specialization String?
+  languages      String[]
+  // e.g. [{"day":"mon","windows":[["09:00","13:00"],["17:00","21:00"]]}, ...]
+  workingHours   Json
+  appointments   Appointment[]
+
+  // Google OAuth tokens for the doctor's own calendar, obtained via the
+  // one-time /oauth/google/authorize -> /oauth/google/callback flow in
+  // call-agent/server.py. Nullable: a doctor who hasn't connected Google
+  // yet just means book_appointment() skips calendar sync (DB booking
+  // still succeeds either way).
+  googleAccessToken   String?   @db.Text
+  googleRefreshToken  String?   @db.Text
+  googleTokenExpiry   DateTime?
+  googleCalendarId    String?   @default("primary")
+}
+
+model Appointment {
+  id              String   @id @default(uuid())
+  doctorId        String
+  patientName     String
+  patientPhone    String
+  date            DateTime @db.Date
+  // stored as "HH:MM" text rather than a DB time type, so both the Node
+  // and Python (asyncpg) sides can read/write it without driver-specific
+  // time-type handling.
+  startTime       String
+  status          String   @default("confirmed")
+  // Google Calendar event id, set after a successful calendar sync.
+  // Null if the doctor hasn't connected Google or the sync call failed —
+  // the DB row is still the source of truth either way.
+  calendarEventId String?
+  createdAt       DateTime @default(now())
+  doctor          Doctor   @relation(fields: [doctorId], references: [id])
+
+  @@unique([doctorId, date, startTime])
+  @@index([doctorId, date])
 }

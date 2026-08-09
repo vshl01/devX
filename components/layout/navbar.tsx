@@ -10,6 +10,7 @@ import {
 } from "motion/react";
 import { useRef, useState } from "react";
 
+import { CallWidget } from "@/components/call/call-widget";
 import { LinkButton } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { Logo } from "@/components/ui/logo";
@@ -78,6 +79,7 @@ export function Navbar() {
             </ul>
 
             <div className="flex items-center gap-2">
+              <CallWidget />
               <LinkButton href="#top" size="sm" className="hidden sm:inline-flex">
                 Read a report
               </LinkButton>

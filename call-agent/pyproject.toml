@@ -1,0 +1,12 @@
+[project]
+name = "call-agent"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "livekit-agents[sarvam]>=1.0",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "asyncpg>=0.29",
+  "python-dotenv>=1.0",
+  "httpx>=0.27",
+]
