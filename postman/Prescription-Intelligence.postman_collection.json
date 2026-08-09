@@ -123,7 +123,33 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"question\": \"What was my blood pressure?\"\n}",
+              "raw": "{\n  \"question\": \"What was my blood pressure?\",\n  \"language\": \"en-IN\",\n  \"history\": [],\n  \"includeAudio\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/prescriptions/{{prescriptionId}}/questions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "prescriptions", "{{prescriptionId}}", "questions"]
+            }
+          }
+        },
+        {
+          "name": "Ask Prescription Question (Kannada + Audio)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"ನನ್ನ ಬಿಪಿ ಎಷ್ಟು ಇತ್ತು?\",\n  \"includeAudio\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"

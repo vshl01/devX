@@ -144,7 +144,11 @@ export type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 export interface QuestionAnswer {
   answer: string;
   found: boolean;
-  source: { field: string } | null;
+  grounded?: boolean;
+  reason?: string | null;
+  language?: string;
+  source?: { field: string; type?: string } | null;
+  audio?: { mimeType: string; base64: string } | null;
 }
 
 export function isTranslatedPresentation(value: unknown): value is TranslatedPresentation {

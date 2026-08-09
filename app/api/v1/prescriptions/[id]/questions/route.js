@@ -7,7 +7,12 @@ export const runtime = 'nodejs';
 
 /**
  * POST /api/v1/prescriptions/:id/questions
- * body: { question: string }
+ * body: {
+ *   question: string,
+ *   language?: string,          // e.g. "kn-IN" — response language override
+ *   history?: Array<{ role: 'user'|'assistant', text: string }>,
+ *   includeAudio?: boolean      // optional Bulbul TTS
+ * }
  */
 export async function POST(request, context) {
   const requestId = createRequestId();
@@ -20,12 +25,23 @@ export async function POST(request, context) {
       throw new AppError(ErrorCodes.VALIDATION_ERROR, 'JSON body is required.', 400);
     }
 
-    const question = /** @type {{ question?: unknown }} */ (body).question;
-    if (typeof question !== 'string') {
+    const payload = /** @type {{
+      question?: unknown,
+      language?: unknown,
+      history?: unknown,
+      includeAudio?: unknown,
+    }} */ (body);
+
+    if (typeof payload.question !== 'string') {
       throw new AppError(ErrorCodes.VALIDATION_ERROR, 'question is required.', 400);
     }
 
-    const data = await answerPrescriptionQuestion(id, question);
+    const data = await answerPrescriptionQuestion(id, payload.question, {
+      language: typeof payload.language === 'string' ? payload.language : null,
+      history: Array.isArray(payload.history) ? payload.history : [],
+      includeAudio: payload.includeAudio === true,
+    });
+
     return success(data, 200);
   } catch (error) {
     return handleRouteError(error, { requestId });

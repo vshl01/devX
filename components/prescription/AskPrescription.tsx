@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Info,
   Microphone,
+  SpeakerHigh,
   SpinnerGap,
   X,
 } from "@phosphor-icons/react";
@@ -24,43 +25,74 @@ type Message = {
   role: "user" | "assistant";
   text: string;
   found?: boolean;
+  reason?: string | null;
+  source?: { field: string; type?: string } | null;
+  audioUrl?: string | null;
 };
 
 export function AskPrescription({
   prescriptionId,
   data,
   disabled,
+  language = "en-IN",
 }: {
   prescriptionId: string | null;
   data: CanonicalPrescription | null;
   disabled?: boolean;
+  language?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "listening" | "processing">("idle");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const audioUrlsRef = useRef<string[]>([]);
   const reduced = useReducedMotion();
   const titleId = useId();
   const suggestions = buildSuggestedQuestions(data);
 
+  const cleanupAudioUrls = useCallback(() => {
+    for (const url of audioUrlsRef.current) URL.revokeObjectURL(url);
+    audioUrlsRef.current = [];
+  }, []);
+
+  useEffect(() => () => cleanupAudioUrls(), [cleanupAudioUrls]);
+
   const ask = useCallback(
-    async (question: string) => {
+    async (question: string, withAudio = false) => {
       const trimmed = question.trim();
       if (!trimmed || !prescriptionId || busy) return;
 
       setError(null);
       setBusy(true);
+      setPhase("processing");
       setOpen(true);
       setInput("");
-      setMessages((prev) => [
-        ...prev,
-        { id: `u-${Date.now()}`, role: "user", text: trimmed },
-      ]);
+
+      const history = messages.slice(-8).map((m) => ({
+        role: m.role,
+        text: m.text,
+      }));
+
+      setMessages((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
 
       try {
-        const result = await askPrescriptionQuestion(prescriptionId, trimmed);
+        const result = await askPrescriptionQuestion(prescriptionId, trimmed, {
+          language,
+          history,
+          includeAudio: withAudio,
+        });
+
+        let audioUrl: string | null = null;
+        if (result.audio?.base64) {
+          const binary = Uint8Array.from(atob(result.audio.base64), (c) => c.charCodeAt(0));
+          const blob = new Blob([binary], { type: result.audio.mimeType || "audio/wav" });
+          audioUrl = URL.createObjectURL(blob);
+          audioUrlsRef.current.push(audioUrl);
+        }
+
         setMessages((prev) => [
           ...prev,
           {
@@ -68,27 +100,45 @@ export function AskPrescription({
             role: "assistant",
             text: result.answer,
             found: result.found,
+            reason: result.reason,
+            source: result.source ?? null,
+            audioUrl,
           },
         ]);
+
+        if (audioUrl) {
+          const audio = new Audio(audioUrl);
+          void audio.play().catch(() => {});
+        }
       } catch (cause) {
         const message =
           cause instanceof PrescriptionApiError
             ? cause.message
-            : "We could not answer that just now. Please try again.";
+            : "We couldn't process your question. Please try again.";
         setError(message);
       } finally {
         setBusy(false);
+        setPhase("idle");
       }
     },
-    [busy, prescriptionId],
+    [busy, language, messages, prescriptionId],
   );
 
   const recorder = useAudioRecorder({
+    languageCode: language.startsWith("en") ? "unknown" : (language as never),
     onTranscript: (text) => {
-      void ask(text);
+      setPhase("processing");
+      void ask(text, true);
     },
-    onEmptyResult: () => setError("We did not catch that. Please try again."),
+    onEmptyResult: () => {
+      setPhase("idle");
+      setError("We did not catch that. Please try again.");
+    },
   });
+
+  useEffect(() => {
+    if (recorder.state === "recording") setPhase("listening");
+  }, [recorder.state]);
 
   useEffect(() => {
     if (!listRef.current) return;
@@ -106,7 +156,7 @@ export function AskPrescription({
               Ask Your Prescription
             </h2>
             <p className="mt-0.5 text-sm text-ink-soft">
-              Ask anything written in your prescription…
+              Ask anything written in your prescription — in your language.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -116,6 +166,7 @@ export function AskPrescription({
               onToggle={() => {
                 if (launcherDisabled) return;
                 setOpen(true);
+                setPhase(recorder.state === "recording" ? "idle" : "listening");
                 recorder.toggle();
               }}
             />
@@ -130,6 +181,10 @@ export function AskPrescription({
             </Button>
           </div>
         </div>
+
+        {phase === "listening" ? (
+          <p className="mt-3 text-sm font-medium text-live">Listening…</p>
+        ) : null}
 
         {!launcherDisabled && suggestions.length > 0 && messages.length === 0 ? (
           <div className="mt-4 flex flex-wrap gap-2">
@@ -173,7 +228,9 @@ export function AskPrescription({
                   <h2 id={titleId} className="text-sm font-semibold text-ink">
                     Ask Your Prescription
                   </h2>
-                  <p className="text-xs text-ink-mute">Answers only from your prescription</p>
+                  <p className="text-xs text-ink-mute">
+                    Answers only from your prescription · multilingual
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -189,8 +246,8 @@ export function AskPrescription({
                 {messages.length === 0 && !busy ? (
                   <div className="space-y-4">
                     <p className="text-sm text-ink-soft">
-                      Try a question about vitals, medicines, tests, or follow-up written on this
-                      prescription.
+                      Ask about vitals, medicines, dosage, timing, or follow-up written on this
+                      prescription — in English or an Indian language.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       {suggestions.map((q) => (
@@ -221,17 +278,39 @@ export function AskPrescription({
                   >
                     {message.role === "assistant" && message.found === false ? (
                       <p className="mb-1.5 inline-flex items-center gap-1 text-[11px] font-medium tracking-wide text-ink-mute uppercase">
-                        <Info size={12} aria-hidden /> Not found in prescription
+                        <Info size={12} aria-hidden />{" "}
+                        {message.reason === "OUT_OF_SCOPE"
+                          ? "Not in prescription"
+                          : "Not found in prescription"}
                       </p>
                     ) : null}
-                    <p>{message.text}</p>
+                    <p className="whitespace-pre-wrap">{message.text}</p>
+                    {message.role === "assistant" && message.source?.field ? (
+                      <p className="mt-2 text-[11px] text-ink-mute">
+                        Source: Prescription · {message.source.field}
+                      </p>
+                    ) : null}
+                    {message.role === "assistant" && message.audioUrl ? (
+                      <button
+                        type="button"
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:border-accent-line hover:text-accent"
+                        onClick={() => {
+                          const audio = new Audio(message.audioUrl!);
+                          void audio.play().catch(() => {});
+                        }}
+                      >
+                        <SpeakerHigh size={14} aria-hidden /> Play response
+                      </button>
+                    ) : null}
                   </div>
                 ))}
 
                 {busy ? (
                   <div className="inline-flex items-center gap-2 rounded-lg bg-sunken px-3 py-2 text-sm text-ink-soft">
                     <SpinnerGap size={14} className="animate-spin" aria-hidden />
-                    Looking in your prescription…
+                    {phase === "listening"
+                      ? "Listening…"
+                      : "Checking your prescription…"}
                   </div>
                 ) : null}
               </div>
@@ -244,13 +323,16 @@ export function AskPrescription({
                 className="flex items-end gap-2 border-t border-line p-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void ask(input);
+                  void ask(input, false);
                 }}
               >
                 <MicButton
                   state={recorder.state}
                   levelRef={recorder.levelRef}
-                  onToggle={recorder.toggle}
+                  onToggle={() => {
+                    setPhase(recorder.state === "recording" ? "idle" : "listening");
+                    recorder.toggle();
+                  }}
                 />
                 <label className="sr-only" htmlFor="ask-prescription-input">
                   Ask a question

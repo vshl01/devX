@@ -103,11 +103,21 @@ export async function translatePrescription(
 export async function askPrescriptionQuestion(
   id: string,
   question: string,
+  options?: {
+    language?: string | null;
+    history?: Array<{ role: "user" | "assistant"; text: string }>;
+    includeAudio?: boolean;
+  },
 ): Promise<QuestionAnswer> {
   const response = await fetch(`/api/v1/prescriptions/${id}/questions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({
+      question,
+      language: options?.language ?? undefined,
+      history: options?.history ?? [],
+      includeAudio: options?.includeAudio === true,
+    }),
   });
   return parseJson(response);
 }

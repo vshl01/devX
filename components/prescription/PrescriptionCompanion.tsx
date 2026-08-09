@@ -389,6 +389,7 @@ export function PrescriptionCompanion() {
               prescriptionId={ready ? prescriptionId : null}
               data={ready ? record?.prescription ?? null : null}
               disabled={!ready}
+              language={language}
             />
           </div>
 
