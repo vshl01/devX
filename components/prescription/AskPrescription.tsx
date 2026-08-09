@@ -6,6 +6,7 @@ import {
   Microphone,
   SpeakerHigh,
   SpinnerGap,
+  Stop,
   X,
 } from "@phosphor-icons/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -48,17 +49,23 @@ export function AskPrescription({
   const [messages, setMessages] = useState<Message[]>([]);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const audioUrlsRef = useRef<string[]>([]);
   const playbackRef = useRef<HTMLAudioElement | null>(null);
+  const playbackDoneRef = useRef<(() => void) | null>(null);
   const messagesRef = useRef<Message[]>([]);
   const phaseRef = useRef<VoicePhase>("idle");
   const askInFlightRef = useRef(false);
+  const askAbortRef = useRef<AbortController | null>(null);
   const reduced = useReducedMotion();
   const titleId = useId();
   const suggestions = buildSuggestedQuestions(data);
 
-  const busy = phase === "processing" || phase === "speaking";
+  const processing = phase === "processing";
+  const speaking = phase === "speaking";
+  const listening = phase === "listening";
+  const inputLocked = processing;
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -68,52 +75,77 @@ export function AskPrescription({
     phaseRef.current = phase;
   }, [phase]);
 
-  const cleanupAudioUrls = useCallback(() => {
-    playbackRef.current?.pause();
+  const finishPlayback = useCallback(() => {
+    const done = playbackDoneRef.current;
+    playbackDoneRef.current = null;
     playbackRef.current = null;
+    setPlayingMessageId(null);
+    done?.();
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    const audio = playbackRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    finishPlayback();
+  }, [finishPlayback]);
+
+  const cleanupAudioUrls = useCallback(() => {
+    stopPlayback();
     for (const url of audioUrlsRef.current) URL.revokeObjectURL(url);
     audioUrlsRef.current = [];
-  }, []);
+  }, [stopPlayback]);
 
   useEffect(() => () => cleanupAudioUrls(), [cleanupAudioUrls]);
 
-  const stopPlayback = useCallback(() => {
-    if (playbackRef.current) {
-      playbackRef.current.pause();
-      playbackRef.current = null;
-    }
-  }, []);
-
   const playResponseAudio = useCallback(
-    (audioUrl: string) =>
+    (audioUrl: string, messageId?: string) =>
       new Promise<void>((resolve) => {
         stopPlayback();
         const audio = new Audio(audioUrl);
         playbackRef.current = audio;
+        playbackDoneRef.current = resolve;
+        if (messageId) setPlayingMessageId(messageId);
+
         const finish = () => {
-          if (playbackRef.current === audio) playbackRef.current = null;
-          resolve();
+          if (playbackRef.current !== audio) return;
+          finishPlayback();
         };
+
         audio.addEventListener("ended", finish, { once: true });
         audio.addEventListener("error", finish, { once: true });
         void audio.play().catch(() => finish());
       }),
-    [stopPlayback],
+    [finishPlayback, stopPlayback],
   );
+
+  const stopSpeaking = useCallback(() => {
+    stopPlayback();
+    if (phaseRef.current === "speaking") setPhase("idle");
+  }, [stopPlayback]);
 
   const ask = useCallback(
     async (question: string, withAudio = false) => {
       const trimmed = question.trim();
       if (!trimmed || !prescriptionId) return;
       if (askInFlightRef.current) return;
-      if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
+      if (phaseRef.current === "processing") return;
+
+      // New question while TTS is playing — cut it off.
+      if (phaseRef.current === "speaking") stopPlayback();
 
       askInFlightRef.current = true;
+      askAbortRef.current?.abort();
+      const abort = new AbortController();
+      askAbortRef.current = abort;
+
       setError(null);
       setPhase("processing");
       setOpen(true);
       setInput("");
-      stopPlayback();
 
       const history = messagesRef.current.slice(-8).map((m) => ({
         role: m.role,
@@ -128,7 +160,10 @@ export function AskPrescription({
           language: null,
           history,
           includeAudio: withAudio,
+          signal: abort.signal,
         });
+
+        if (abort.signal.aborted) return;
 
         let audioUrl: string | null = null;
         if (result.audio?.base64) {
@@ -138,10 +173,11 @@ export function AskPrescription({
           audioUrlsRef.current.push(audioUrl);
         }
 
+        const assistantId = `a-${Date.now()}`;
         setMessages((prev) => [
           ...prev,
           {
-            id: `a-${Date.now()}`,
+            id: assistantId,
             role: "assistant",
             text: result.answer,
             found: result.found,
@@ -151,19 +187,29 @@ export function AskPrescription({
           },
         ]);
 
-        if (audioUrl) {
+        if (audioUrl && !abort.signal.aborted) {
           setPhase("speaking");
-          await playResponseAudio(audioUrl);
+          await playResponseAudio(audioUrl, assistantId);
         }
       } catch (cause) {
+        if (
+          abort.signal.aborted ||
+          (cause instanceof DOMException && cause.name === "AbortError") ||
+          (cause instanceof Error && cause.name === "AbortError")
+        ) {
+          return;
+        }
         const message =
           cause instanceof PrescriptionApiError
             ? cause.message
             : "We couldn't process your question. Please try again.";
         setError(message);
       } finally {
+        if (askAbortRef.current === abort) askAbortRef.current = null;
         askInFlightRef.current = false;
-        setPhase("idle");
+        if (!abort.signal.aborted) {
+          setPhase((current) => (current === "processing" || current === "speaking" ? "idle" : current));
+        }
       }
     },
     [playResponseAudio, prescriptionId, stopPlayback],
@@ -179,7 +225,7 @@ export function AskPrescription({
     mode: "utterance",
     onTranscript: (text) => {
       if (askInFlightRef.current) return;
-      if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
+      if (phaseRef.current === "processing") return;
       const cleaned = text.trim();
       if (!cleaned) return;
       setPhase("processing");
@@ -193,20 +239,22 @@ export function AskPrescription({
   });
 
   const recorderStopRef = useRef(recorder.stop);
+  const recorderCancelRef = useRef(recorder.cancel);
   useEffect(() => {
     recorderStopRef.current = recorder.stop;
-  }, [recorder.stop]);
+    recorderCancelRef.current = recorder.cancel;
+  }, [recorder.cancel, recorder.stop]);
 
   useEffect(() => {
     if (recorder.state === "recording") {
-      setPhase((current) => (current === "idle" ? "listening" : current));
+      setPhase((current) => (current === "idle" || current === "speaking" ? "listening" : current));
     }
   }, [recorder.state]);
 
-  // Mic must stay closed while we process or speak the answer.
+  // Mic must stay closed while we process an answer.
   useEffect(() => {
-    if (phase === "processing" || phase === "speaking") {
-      recorderStopRef.current();
+    if (phase === "processing") {
+      recorderCancelRef.current();
     }
   }, [phase]);
 
@@ -215,33 +263,84 @@ export function AskPrescription({
     listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages, phase, open]);
 
-  const closeChat = useCallback(() => {
-    recorderStopRef.current();
-    stopPlayback();
+  const cancelAsk = useCallback(() => {
+    askAbortRef.current?.abort();
+    askAbortRef.current = null;
     askInFlightRef.current = false;
+    stopPlayback();
     setPhase("idle");
-    setOpen(false);
   }, [stopPlayback]);
+
+  const closeChat = useCallback(() => {
+    recorderCancelRef.current();
+    cancelAsk();
+    setOpen(false);
+  }, [cancelAsk]);
 
   const toggleMic = useCallback(() => {
     if (disabled || !prescriptionId) return;
-    if (phaseRef.current === "processing" || phaseRef.current === "speaking") return;
+
+    // Interrupt TTS, then start a new question.
+    if (phaseRef.current === "speaking") {
+      stopSpeaking();
+      setOpen(true);
+      setError(null);
+      setPhase("listening");
+      void recorder.start();
+      return;
+    }
+
+    if (phaseRef.current === "processing") return;
 
     setOpen(true);
     setError(null);
 
     if (recorder.state === "recording" || recorder.state === "requesting") {
+      // Early end: flush what was said so it can be answered.
       recorder.stop();
-      setPhase("idle");
       return;
     }
 
     setPhase("listening");
     void recorder.start();
-  }, [disabled, prescriptionId, recorder]);
+  }, [disabled, prescriptionId, recorder, stopSpeaking]);
+
+  const cancelListening = useCallback(() => {
+    recorderCancelRef.current();
+    setPhase("idle");
+    setError(null);
+  }, []);
+
+  const replayOrStop = useCallback(
+    (message: Message) => {
+      if (!message.audioUrl || processing || askInFlightRef.current) return;
+
+      if (playingMessageId === message.id && phaseRef.current === "speaking") {
+        stopSpeaking();
+        return;
+      }
+
+      setPhase("speaking");
+      void playResponseAudio(message.audioUrl, message.id).finally(() => {
+        if (!askInFlightRef.current && phaseRef.current === "speaking") {
+          setPhase("idle");
+        }
+      });
+    },
+    [playResponseAudio, playingMessageId, processing, stopSpeaking],
+  );
 
   const launcherDisabled = disabled || !prescriptionId;
-  const micBusy = phase === "processing" || phase === "speaking";
+  const micBlocked = processing;
+
+  const phaseLabel =
+    phase === "listening"
+      ? "Listening… tap mic when you're done"
+      : phase === "processing"
+        ? "Checking your prescription…"
+        : phase === "speaking"
+          ? "Speaking answer… tap mic or Stop to interrupt"
+          : null;
 
   return (
     <>
@@ -252,17 +351,23 @@ export function AskPrescription({
               Ask Your Prescription
             </h2>
             <p className="mt-0.5 text-sm text-ink-soft">
-              Tap the mic, ask in any language, then wait for the answer before speaking again.
+              Tap the mic, ask in any language. You can stop the answer anytime and ask again.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className={cn(micBusy && "pointer-events-none opacity-45")}>
+            <div className={cn(micBlocked && "pointer-events-none opacity-45")}>
               <MicButton
                 state={launcherDisabled ? "unsupported" : recorder.state}
                 levelRef={recorder.levelRef}
                 onToggle={toggleMic}
               />
             </div>
+            {speaking ? (
+              <Button type="button" variant="secondary" size="sm" onClick={stopSpeaking}>
+                <Stop size={14} weight="fill" className="mr-1.5" aria-hidden />
+                Stop
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -275,18 +380,14 @@ export function AskPrescription({
           </div>
         </div>
 
-        {phase !== "idle" ? (
+        {phaseLabel ? (
           <p
             className={cn(
               "mt-3 text-sm font-medium",
-              phase === "listening" ? "text-live" : "text-ink-soft",
+              listening ? "text-live" : "text-ink-soft",
             )}
           >
-            {phase === "listening"
-              ? "Listening… speak your question"
-              : phase === "processing"
-                ? "Checking your prescription…"
-                : "Speaking answer…"}
+            {phaseLabel}
           </p>
         ) : null}
 
@@ -296,7 +397,7 @@ export function AskPrescription({
               <button
                 key={q}
                 type="button"
-                disabled={busy}
+                disabled={inputLocked}
                 onClick={() => void ask(q, false)}
                 className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft transition-[background-color,border-color,color] duration-150 ease-out-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent disabled:opacity-50"
               >
@@ -334,7 +435,7 @@ export function AskPrescription({
                     Ask Your Prescription
                   </h2>
                   <p className="text-xs text-ink-mute">
-                    You speak → answer plays → then you can speak again
+                    Speak or type · interrupt the answer anytime
                   </p>
                 </div>
                 <button
@@ -359,7 +460,7 @@ export function AskPrescription({
                         <button
                           key={q}
                           type="button"
-                          disabled={busy}
+                          disabled={inputLocked}
                           onClick={() => void ask(q, false)}
                           className="rounded-full border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft hover:border-accent-line hover:bg-accent-soft hover:text-accent disabled:opacity-50"
                         >
@@ -399,35 +500,62 @@ export function AskPrescription({
                     {message.role === "assistant" && message.audioUrl ? (
                       <button
                         type="button"
-                        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:border-accent-line hover:text-accent"
-                        disabled={phase === "processing"}
-                        onClick={() => {
-                          if (phaseRef.current === "processing" || askInFlightRef.current) return;
-                          setPhase("speaking");
-                          void playResponseAudio(message.audioUrl!).finally(() => {
-                            if (!askInFlightRef.current) setPhase("idle");
-                          });
-                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:border-accent-line hover:text-accent disabled:opacity-50"
+                        disabled={processing}
+                        onClick={() => replayOrStop(message)}
                       >
-                        <SpeakerHigh size={14} aria-hidden /> Play response
+                        {playingMessageId === message.id && speaking ? (
+                          <>
+                            <Stop size={14} weight="fill" aria-hidden /> Stop
+                          </>
+                        ) : (
+                          <>
+                            <SpeakerHigh size={14} aria-hidden /> Play response
+                          </>
+                        )}
                       </button>
                     ) : null}
                   </div>
                 ))}
 
                 {phase !== "idle" ? (
-                  <div className="inline-flex items-center gap-2 rounded-lg bg-sunken px-3 py-2 text-sm text-ink-soft">
-                    {phase === "listening" ? (
+                  <div className="inline-flex flex-wrap items-center gap-2 rounded-lg bg-sunken px-3 py-2 text-sm text-ink-soft">
+                    {listening ? (
                       <>
                         <span className="size-2 animate-pulse rounded-full bg-live" aria-hidden />
-                        Listening… tap mic again to cancel
+                        Listening… tap mic when done
+                        <button
+                          type="button"
+                          onClick={cancelListening}
+                          className="ml-1 rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-ink-soft hover:border-accent-line hover:text-accent"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : speaking ? (
+                      <>
+                        <SpeakerHigh size={14} className="text-accent" aria-hidden />
+                        Speaking answer…
+                        <button
+                          type="button"
+                          onClick={stopSpeaking}
+                          className="ml-1 inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-ink-soft hover:border-danger hover:text-danger"
+                        >
+                          <Stop size={12} weight="fill" aria-hidden />
+                          Stop
+                        </button>
                       </>
                     ) : (
                       <>
                         <SpinnerGap size={14} className="animate-spin" aria-hidden />
-                        {phase === "speaking"
-                          ? "Speaking answer…"
-                          : "Checking your prescription…"}
+                        Checking your prescription…
+                        <button
+                          type="button"
+                          onClick={cancelAsk}
+                          className="ml-1 rounded-full border border-line bg-surface px-2 py-0.5 text-xs text-ink-soft hover:border-accent-line hover:text-accent"
+                        >
+                          Cancel
+                        </button>
                       </>
                     )}
                   </div>
@@ -442,11 +570,12 @@ export function AskPrescription({
                 className="flex items-end gap-2 border-t border-line p-3"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (busy) return;
+                  if (inputLocked) return;
+                  if (speaking) stopSpeaking();
                   void ask(input, false);
                 }}
               >
-                <div className={cn(micBusy && "pointer-events-none opacity-45")}>
+                <div className={cn(micBlocked && "pointer-events-none opacity-45")}>
                   <MicButton
                     state={recorder.state}
                     levelRef={recorder.levelRef}
@@ -461,22 +590,22 @@ export function AskPrescription({
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder={
-                    phase === "speaking"
-                      ? "Wait for the answer to finish…"
-                      : phase === "processing"
+                    speaking
+                      ? "Type to interrupt and ask…"
+                      : processing
                         ? "Processing…"
                         : "Ask a question…"
                   }
-                  disabled={busy}
+                  disabled={inputLocked}
                   className="h-11 flex-1 rounded-full border border-line-strong bg-sunken px-4 text-sm text-ink outline-none placeholder:text-ink-mute focus:border-accent-line disabled:opacity-60"
                 />
                 <button
                   type="submit"
-                  disabled={busy || !input.trim()}
+                  disabled={inputLocked || !input.trim()}
                   aria-label="Send"
                   className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-[opacity,transform] duration-150 ease-out-soft enabled:hover:bg-accent-hover enabled:active:scale-[0.96] disabled:opacity-45"
                 >
-                  {busy ? (
+                  {processing ? (
                     <SpinnerGap size={18} className="animate-spin" />
                   ) : recorder.state === "recording" ? (
                     <Microphone size={18} />
