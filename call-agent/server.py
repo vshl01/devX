@@ -17,12 +17,12 @@ load_dotenv()
 
 app = FastAPI()
 
-# ponytail: permissive CORS for the hackathon so the other dev's UI (unknown
-# origin yet) can call this directly. Lock to the real UI origin before
-# this is public-facing.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://dev-x-zeta.vercel.app",
+        "http://localhost:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
